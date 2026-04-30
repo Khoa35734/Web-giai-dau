@@ -1,0 +1,167 @@
+.tournament-card {
+  background: rgba(30, 30, 60, 0.8) !important;
+  border: 1px solid rgba(255, 107, 0, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.tournament-card:hover {
+  transform: translateY(-10px);
+  border-color: #FF6B00;
+  box-shadow: 0 15px 40px rgba(255, 107, 0, 0.2);
+  background: rgba(30, 30, 60, 0.95) !important;
+}
+
+.card-image-wrapper {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  overflow: hidden;
+  background: rgba(30, 30, 60, 0.8) !important;
+}
+
+.card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.tournament-card:hover .card-image {
+  transform: scale(1.1);
+}
+
+.card-content {
+  padding: 20px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  background: rgba(30, 30, 60, 0.8) !important;
+}
+
+.card-title {
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.4;
+  min-height: 45px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 107, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 107, 0, 0.2);
+  padding: 12px 0;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.meta-icon {
+  font-size: 16px;
+  min-width: 20px;
+}
+
+.meta-text {
+  color: #B0B0B0;
+  line-height: 1.3;
+}
+
+.card-game-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.game-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  object-fit: contain;
+  padding: 4px;
+  background: transparent !important;
+}
+
+.game-logo-fallback {
+  font-size: 24px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border-radius: 4px;
+  background: transparent !important;
+}
+
+.game-name {
+  color: #FF6B00;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.register-btn {
+  background: linear-gradient(135deg, #FF6B00 0%, #FF8C00 100%);
+  color: #FFFFFF;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: auto;
+}
+
+.register-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 8px 20px rgba(255, 107, 0, 0.4);
+}
+
+.register-btn:active {
+  transform: scale(0.98);
+}
+
+@media (max-width: 768px) {
+  .tournament-card {
+    border-radius: 8px;
+  }
+
+  .card-image-wrapper {
+    height: 150px;
+  }
+
+  .card-content {
+    padding: 15px;
+    gap: 12px;
+  }
+
+  .card-title {
+    font-size: 14px;
+  }
+
+  .register-btn {
+    padding: 10px 20px;
+    font-size: 12px;
+  }
+}
