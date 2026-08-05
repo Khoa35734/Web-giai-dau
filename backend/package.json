@@ -1,0 +1,39 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "DUT Esports Tournament Platform - Backend API (Express + PostgreSQL + TypeScript)",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "seed": "node src/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "express",
+    "postgresql",
+    "typescript",
+    "esports"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "multer": "^2.1.1",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.9.0"
+  }
+}

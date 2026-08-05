@@ -1,0 +1,14 @@
+{
+  "name": "web-giai-dau-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DUT Esports — Backend API (Express + PostgreSQL + TypeScript)",
+  "scripts": {
+    "dev": "npm run dev --prefix backend",
+    "start": "npm start --prefix backend",
+    "seed": "npm run seed --prefix backend",
+    "typecheck": "npm run typecheck --prefix backend",
+    "db": "docker compose up -d postgres",
+    "db:down": "docker compose down"
+  }
+}

@@ -1,0 +1,32 @@
+# =========================================================
+# DUT Esports — PostgreSQL
+# Chạy:  docker compose up -d postgres
+# Dừng:  docker compose down
+# Xóa cả dữ liệu:  docker compose down -v
+# =========================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dut_esports_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: web_giai_dau
+    ports:
+      # Port 5433 để tránh xung đột với PostgreSQL local đang chiếm 5432
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Tự động chạy schema khi DB được khởi tạo lần đầu
+      - ./backend/docker/init/01-extension.sql:/docker-entrypoint-initdb.d/01-extension.sql:ro
+      - ./backend/database.sql:/docker-entrypoint-initdb.d/02-database.sql:ro
+      - ./backend/migration.sql:/docker-entrypoint-initdb.d/03-migration.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d web_giai_dau"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
