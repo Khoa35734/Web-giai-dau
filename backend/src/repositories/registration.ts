@@ -1,5 +1,11 @@
 import pool from '../config/db.ts';
-import type { FormField, Registration, RegistrationStatus, Tournament } from '../types/index.ts';
+import type {
+  FormField,
+  Registration,
+  RegistrationMember,
+  RegistrationStatus,
+  Tournament,
+} from '../types/index.ts';
 
 export interface RegistrationFilters {
   tournament_id?: string;
@@ -17,15 +23,71 @@ export interface RegistrationWithTournament extends Registration {
  * Toàn bộ SQL tập trung tại đây, controller chỉ gọi hàm.
  */
 export const registrationRepository = {
-  /** Tạo đăng ký mới. */
-  async create(tournament_id: string, submitted_data: unknown): Promise<Registration> {
-    const result = await pool.query<Registration>(
-      `INSERT INTO registrations (tournament_id, submitted_data, status)
-       VALUES ($1, $2, 'pending')
-       RETURNING *`,
-      [tournament_id, JSON.stringify(submitted_data)],
-    );
-    return result.rows[0];
+  /** Tạo đăng ký team mới và đồng thời ghi registration_members. */
+  async createTeamRegistration(data: {
+    tournament_id: string;
+    captain_id: string;
+    team_name?: string | null;
+    submitted_data?: unknown;
+    member_ids?: string[];
+    is_auto_matched?: boolean;
+  }): Promise<Registration & { members: RegistrationMember[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const tournamentResult = await client.query<Pick<Tournament, 'id' | 'participation_type' | 'min_team_size' | 'max_team_size'>>(
+        'SELECT id, participation_type, min_team_size, max_team_size FROM tournaments WHERE id = $1 FOR SHARE',
+        [data.tournament_id],
+      );
+      const tournament = tournamentResult.rows[0];
+      if (!tournament) {
+        throw new Error('Không tìm thấy giải đấu');
+      }
+      const memberIds = Array.from(new Set([data.captain_id, ...(data.member_ids ?? [])]));
+      if (tournament.participation_type === 'team') {
+        const minSize = tournament.min_team_size ?? memberIds.length;
+        const maxSize = tournament.max_team_size ?? memberIds.length;
+        if (memberIds.length < minSize || memberIds.length > maxSize) {
+          throw new Error(`Số lượng thành viên phải từ ${minSize} đến ${maxSize}`);
+        }
+      } else if (memberIds.length !== 1) {
+        throw new Error('Giải đấu cá nhân chỉ cho phép 1 người đăng ký');
+      }
+
+      const registrationResult = await client.query<Registration>(
+        `INSERT INTO registrations (tournament_id, captain_id, team_name, submitted_data, status, is_auto_matched)
+         VALUES ($1, $2, $3, $4, 'pending', $5)
+         RETURNING *`,
+        [
+          data.tournament_id,
+          data.captain_id,
+          data.team_name ?? null,
+          JSON.stringify(data.submitted_data ?? {}),
+          data.is_auto_matched ?? false,
+        ],
+      );
+      const registration = registrationResult.rows[0];
+
+      const members: RegistrationMember[] = [];
+      for (const participantId of memberIds) {
+        const memberResult = await client.query<RegistrationMember>(
+          `INSERT INTO registration_members (registration_id, participant_id, is_captain)
+           VALUES ($1, $2, $3)
+           RETURNING *`,
+          [registration.id, participantId, participantId === data.captain_id],
+        );
+        members.push(memberResult.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return { ...registration, members };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   /** Tất cả đăng ký — admin, lọc theo giải + trạng thái. */

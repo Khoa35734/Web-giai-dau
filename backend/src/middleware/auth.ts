@@ -8,6 +8,11 @@ export interface AuthenticatedRequest extends Request {
   user?: JwtPayload;
 }
 
+/** Request đã được xác thực cho participant. */
+export interface AuthenticatedParticipantRequest extends Request {
+  participant?: JwtPayload & { kind: 'participant' };
+}
+
 /** Xác thực JWT Bearer token. */
 export function verifyToken(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
   const token = req.headers.authorization?.split(' ')[1];
@@ -17,7 +22,36 @@ export function verifyToken(req: AuthenticatedRequest, res: Response, next: Next
   }
   try {
     const decoded = jwt.verify(token, env.jwtSecret) as JwtPayload;
+    if (decoded.kind === 'participant') {
+      res.status(403).json({ success: false, message: 'Token participant không hợp lệ cho route này' });
+      return;
+    }
     req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+}
+
+/** Xác thực JWT Bearer token cho participant. */
+export function verifyParticipantToken(
+  req: AuthenticatedParticipantRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    res.status(401).json({ success: false, message: 'Token not found' });
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, env.jwtSecret) as JwtPayload;
+    if (decoded.kind !== 'participant') {
+      res.status(403).json({ success: false, message: 'Token user không hợp lệ cho route này' });
+      return;
+    }
+    req.participant = decoded;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid token' });

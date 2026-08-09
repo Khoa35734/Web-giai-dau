@@ -1,9 +1,11 @@
 /**
  * Domain types shared across the backend application.
- * Map 1:1 với schema PostgreSQL (users, tournaments, registrations).
+ * Map 1:1 với schema PostgreSQL (users, participants, tournaments, registrations).
  */
 
-export type UserRole = 'admin' | 'ctv' | 'user';
+export type UserRole = 'admin' | 'ctv';
+
+export type ParticipantAccountType = 'dut' | 'free';
 
 export type TournamentStatus = 'pending' | 'approved' | 'rejected' | 'active' | 'completed';
 
@@ -16,11 +18,6 @@ export interface User {
   email: string;
   password_hash: string;
   full_name: string;
-  student_id: string | null;
-  phone: string | null;
-  faculty: string | null;
-  class_name: string | null;
-  course: string | null;
   role: UserRole;
   is_active: boolean;
   created_at: string;
@@ -32,13 +29,31 @@ export interface SafeUser {
   id: string;
   email: string;
   full_name: string;
-  student_id: string | null;
-  phone: string | null;
-  faculty: string | null;
-  class_name: string | null;
-  course: string | null;
   role: UserRole;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Participant {
+  id: string;
+  account_type: ParticipantAccountType;
+  username: string;
+  password_hash: string;
+  full_name: string;
+  class_name: string | null;
+  faculty_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SafeParticipant {
+  id: string;
+  account_type: ParticipantAccountType;
+  username: string;
+  full_name: string;
+  class_name: string | null;
+  faculty_name: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -66,7 +81,6 @@ export interface Tournament {
   max_participants: number;
   min_team_size: number | null;
   max_team_size: number | null;
-  prize_pool: number;
   registration_open_at: string;
   registration_close_at: string;
   start_at: string;
@@ -86,17 +100,30 @@ export interface Tournament {
 export interface Registration {
   id: string;
   tournament_id: string;
+  captain_id: string;
+  team_name: string | null;
   submitted_data: Record<string, unknown> | string;
   status: RegistrationStatus;
   registered_at: string;
   updated_at: string;
+  is_auto_matched: boolean;
+}
+
+export interface RegistrationMember {
+  registration_id: string;
+  participant_id: string;
+  is_captain: boolean;
+  created_at?: string;
 }
 
 export interface JwtPayload {
+  kind: 'user' | 'participant';
   id: string;
-  email: string;
+  email?: string;
+  username?: string;
   full_name: string;
-  role: UserRole;
+  role?: UserRole;
+  account_type?: ParticipantAccountType;
 }
 
 export interface PaginationResult {

@@ -13,9 +13,9 @@ export interface PaginatedResult<T> {
 }
 
 const USER_COLUMNS =
-  'id, email, full_name, student_id, phone, faculty, class_name, course, role, is_active, created_at, updated_at';
+  'id, email, full_name, role, is_active, created_at, updated_at';
 
-const SAFE_USER_COLUMNS = 'id, email, full_name, student_id, phone, faculty, class_name, course, role, is_active';
+const SAFE_USER_COLUMNS = 'id, email, full_name, role, is_active';
 
 /** Xây dựng điều kiện WHERE chung cho user (search + status + role). */
 function buildWhere(filters: UserFilters): { sql: string; params: unknown[] } {
@@ -25,7 +25,7 @@ function buildWhere(filters: UserFilters): { sql: string; params: unknown[] } {
   if (filters.search) {
     params.push(`%${filters.search}%`);
     conditions.push(
-      `(full_name ILIKE $${params.length} OR email ILIKE $${params.length} OR student_id ILIKE $${params.length})`,
+      `(full_name ILIKE $${params.length} OR email ILIKE $${params.length})`,
     );
   }
   if (filters.status) {
@@ -59,20 +59,6 @@ export const userRepository = {
     return result.rows.length > 0;
   },
 
-  /** Kiểm tra mã số sinh viên đã tồn tại chưa. */
-  async studentIdExists(studentId: string, excludeId?: string): Promise<boolean> {
-    const result = excludeId
-      ? await pool.query('SELECT id FROM users WHERE student_id = $1 AND id != $2', [studentId, excludeId])
-      : await pool.query('SELECT id FROM users WHERE student_id = $1', [studentId]);
-    return result.rows.length > 0;
-  },
-
-  /** Tìm user theo mã số sinh viên (đầy đủ, gồm password_hash). */
-  async findByStudentId(studentId: string): Promise<User | null> {
-    const result = await pool.query<User>('SELECT * FROM users WHERE student_id = $1', [studentId]);
-    return result.rows[0] ?? null;
-  },
-
   /** Tìm user theo id (đầy đủ, gồm password_hash). */
   async findById(id: string): Promise<User | null> {
     const result = await pool.query<User>('SELECT * FROM users WHERE id = $1', [id]);
@@ -93,27 +79,17 @@ export const userRepository = {
     email?: string | null;
     password_hash: string;
     full_name: string;
-    student_id?: string | null;
-    phone?: string | null;
-    faculty?: string | null;
-    class_name?: string | null;
-    course?: string | null;
     role: UserRole;
     is_active: boolean;
   }): Promise<SafeUser> {
     const result = await pool.query<SafeUser>(
-      `INSERT INTO users (email, password_hash, full_name, student_id, phone, faculty, class_name, course, role, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO users (email, password_hash, full_name, role, is_active)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING ${SAFE_USER_COLUMNS}`,
       [
         data.email ?? null,
         data.password_hash,
         data.full_name,
-        data.student_id ?? null,
-        data.phone ?? null,
-        data.faculty ?? null,
-        data.class_name ?? null,
-        data.course ?? null,
         data.role,
         data.is_active,
       ],
@@ -130,11 +106,6 @@ export const userRepository = {
       password_hash?: string;
       role?: UserRole;
       is_active?: boolean;
-      student_id?: string | null;
-      phone?: string | null;
-      faculty?: string | null;
-      class_name?: string | null;
-      course?: string | null;
     },
   ): Promise<SafeUser | null> {
     const result = await pool.query<SafeUser>(
@@ -144,13 +115,8 @@ export const userRepository = {
           password_hash = COALESCE($3, password_hash),
           role = COALESCE($4, role),
           is_active = COALESCE($5, is_active),
-          student_id = COALESCE($6, student_id),
-          phone = COALESCE($7, phone),
-          faculty = COALESCE($8, faculty),
-          class_name = COALESCE($9, class_name),
-          course = COALESCE($10, course),
           updated_at = NOW()
-       WHERE id = $11
+       WHERE id = $6
        RETURNING ${USER_COLUMNS}`,
       [
         data.email,
@@ -158,11 +124,6 @@ export const userRepository = {
         data.password_hash ?? null,
         data.role ?? null,
         data.is_active ?? null,
-        data.student_id ?? null,
-        data.phone ?? null,
-        data.faculty ?? null,
-        data.class_name ?? null,
-        data.course ?? null,
         id,
       ],
     );

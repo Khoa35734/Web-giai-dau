@@ -11,11 +11,5 @@ export const env = {
   port: Number(process.env.PORT) || 5000,
   jwtSecret: process.env.JWT_SECRET ?? 'your-secret-key-change-in-production',
   jwtExpire: process.env.JWT_EXPIRE ?? '24h',
-  db: {
-    host: process.env.DB_HOST ?? 'localhost',
-    port: Number(process.env.DB_PORT) || 5432,
-    user: process.env.DB_USER ?? 'postgres',
-    password: process.env.DB_PASSWORD ?? 'postgres',
-    database: process.env.DB_NAME ?? 'web_giai_dau',
-  },
+  supabaseDatabaseUrl: process.env.SUPABASE_DATABASE_URL ?? '',
 } as const;

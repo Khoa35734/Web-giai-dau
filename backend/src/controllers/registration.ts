@@ -1,5 +1,5 @@
 import type { Response } from 'express';
-import type { AuthenticatedRequest } from '../middleware/auth.ts';
+import type { AuthenticatedParticipantRequest, AuthenticatedRequest } from '../middleware/auth.ts';
 import {
   getTournamentFormSchema,
   registrationRepository,
@@ -13,27 +13,64 @@ import { created, fail, ok } from '../utils/response.ts';
 interface RegistrationBody {
   tournament_id?: string;
   form_data?: Record<string, unknown>;
+  submitted_data?: Record<string, unknown>;
+  team_name?: string;
+  member_ids?: string[];
 }
 
-/** Đăng ký tham gia giải đấu (public) — validate theo form_schema của giải. */
-export const create = asyncHandler(async (req, res: Response) => {
-  const { tournament_id, form_data } = req.body as RegistrationBody;
+function normalizeSubmittedData(body: RegistrationBody): Record<string, unknown> {
+  return body.submitted_data ?? body.form_data ?? {};
+}
 
-  if (!tournament_id || !form_data) {
-    return fail(res, 'Thiếu tournament_id hoặc form_data', 400);
-  }
-
-  // Validate các trường bắt buộc theo form_schema của giải
-  const formSchema = await getTournamentFormSchema(tournament_id);
+function validateRequiredFields(formSchema: Awaited<ReturnType<typeof getTournamentFormSchema>>, formData: Record<string, unknown>): string | null {
   for (const field of formSchema.filter((f) => f.required)) {
-    const val = form_data[field.id];
+    const val = formData[field.id];
     if (!val || String(val).trim() === '') {
-      return fail(res, `Truong "${field.label}" la bat buoc`, 400);
+      return `Truong "${field.label}" la bat buoc`;
     }
   }
+  return null;
+}
 
-  const registration = await registrationRepository.create(tournament_id, form_data);
-  return created(res, registration, 'Dang ky thanh cong! Vui long cho xac nhan tu ban to chuc.');
+/** Đăng ký tham gia giải đấu bằng participant token. */
+export const create = asyncHandler(async (req: AuthenticatedParticipantRequest, res: Response) => {
+  const { tournament_id } = req.body as RegistrationBody;
+  const submittedData = normalizeSubmittedData(req.body as RegistrationBody);
+
+  if (!tournament_id) {
+    return fail(res, 'Thiếu tournament_id', 400);
+  }
+
+  if (!req.participant) {
+    return fail(res, 'Thiếu thông tin người đăng ký', 401);
+  }
+
+  const tournament = await tournamentRepository.findById(tournament_id);
+  if (!tournament) {
+    return fail(res, 'Không tìm thấy giải đấu', 404);
+  }
+
+  const formSchema = await getTournamentFormSchema(tournament_id);
+  const validationError = validateRequiredFields(formSchema, submittedData);
+  if (validationError) {
+    return fail(res, validationError, 400);
+  }
+
+  const memberIds = Array.isArray(req.body.member_ids) ? req.body.member_ids : [];
+  try {
+    const registration = await registrationRepository.createTeamRegistration({
+      tournament_id,
+      captain_id: req.participant.id,
+      team_name: req.body.team_name?.trim() || null,
+      submitted_data: submittedData,
+      member_ids: memberIds,
+      is_auto_matched: false,
+    });
+
+    return created(res, registration, 'Dang ky thanh cong! Vui long cho xac nhan tu ban to chuc.');
+  } catch (error) {
+    return fail(res, error instanceof Error ? error.message : 'Không thể đăng ký giải đấu', 400);
+  }
 });
 
 /** Tất cả đăng ký (admin) — hỗ trợ lọc theo giải & trạng thái. */

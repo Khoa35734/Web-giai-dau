@@ -17,7 +17,6 @@ interface TournamentBody {
   max_participants?: number;
   min_team_size?: number | null;
   max_team_size?: number | null;
-  prize_pool?: number;
   registration_open_at?: string;
   registration_close_at?: string;
   start_at?: string;
@@ -77,7 +76,6 @@ export const create = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     max_participants: body.max_participants,
     min_team_size: body.min_team_size ?? null,
     max_team_size: body.max_team_size ?? null,
-    prize_pool: body.prize_pool ?? 0,
     registration_open_at: body.registration_open_at,
     registration_close_at: body.registration_close_at,
     start_at: body.start_at,
@@ -143,7 +141,6 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     max_participants: body.max_participants ?? tournament.max_participants,
     min_team_size: body.min_team_size !== undefined ? body.min_team_size : tournament.min_team_size,
     max_team_size: body.max_team_size !== undefined ? body.max_team_size : tournament.max_team_size,
-    prize_pool: body.prize_pool !== undefined ? body.prize_pool : tournament.prize_pool,
     registration_open_at: body.registration_open_at ?? tournament.registration_open_at,
     registration_close_at: body.registration_close_at ?? tournament.registration_close_at,
     start_at: body.start_at ?? tournament.start_at,

@@ -37,17 +37,17 @@ async function createTournament(data: Record<string, unknown>) {
   const result = await pool.query(
     `INSERT INTO tournaments (
         code, name, game_name, game_logo_url, banner_url, participation_type,
-        max_participants, min_team_size, max_team_size, prize_pool,
+        max_participants, min_team_size, max_team_size,
         registration_open_at, registration_close_at, start_at, end_at,
         description, use_external_link, external_registration_url, form_schema,
         created_by, approved_by, status, approved_at
      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
      ) RETURNING id`,
     [
       data.code, data.name, data.game_name, data.game_logo_url, data.banner_url,
       data.participation_type, data.max_participants, data.min_team_size, data.max_team_size,
-      data.prize_pool, data.registration_open_at, data.registration_close_at,
+      data.registration_open_at, data.registration_close_at,
       data.start_at, data.end_at, data.description, data.use_external_link,
       data.external_registration_url, JSON.stringify(data.form_schema),
       data.created_by, data.approved_by, data.status, data.approved_at,
@@ -130,7 +130,6 @@ async function seed() {
     max_participants: 32,
     min_team_size: 5,
     max_team_size: 6,
-    prize_pool: 15_000_000,
     registration_open_at: new Date(now - 5 * day).toISOString(),
     registration_close_at: new Date(now + 10 * day).toISOString(),
     start_at: new Date(now + 15 * day).toISOString(),
@@ -156,7 +155,6 @@ async function seed() {
     max_participants: 16,
     min_team_size: 5,
     max_team_size: 5,
-    prize_pool: 8_000_000,
     registration_open_at: new Date(now - 2 * day).toISOString(),
     registration_close_at: new Date(now + 7 * day).toISOString(),
     start_at: new Date(now + 12 * day).toISOString(),
@@ -182,7 +180,6 @@ async function seed() {
     max_participants: 64,
     min_team_size: 5,
     max_team_size: 5,
-    prize_pool: 5_000_000,
     registration_open_at: new Date(now - 1 * day).toISOString(),
     registration_close_at: new Date(now + 5 * day).toISOString(),
     start_at: new Date(now + 8 * day).toISOString(),
@@ -208,7 +205,6 @@ async function seed() {
     max_participants: 128,
     min_team_size: null,
     max_team_size: null,
-    prize_pool: 3_000_000,
     registration_open_at: new Date(now - 3 * day).toISOString(),
     registration_close_at: new Date(now + 4 * day).toISOString(),
     start_at: new Date(now + 6 * day).toISOString(),
@@ -235,7 +231,6 @@ async function seed() {
     max_participants: 16,
     min_team_size: 5,
     max_team_size: 5,
-    prize_pool: 2_000_000,
     registration_open_at: new Date(now + 2 * day).toISOString(),
     registration_close_at: new Date(now + 12 * day).toISOString(),
     start_at: new Date(now + 18 * day).toISOString(),
