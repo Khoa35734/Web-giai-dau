@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import * as registrationController from '../controllers/registration.ts';
-import { verifyAdmin, verifyToken } from '../middleware/auth.ts';
+import { verifyAdmin, verifyParticipantToken, verifyToken } from '../middleware/auth.ts';
 
 const router = Router();
 
-// Public — đăng ký tham gia giải đấu
-router.post('/', registrationController.create);
+// Participant — đăng ký tham gia giải đấu
+router.post('/', verifyParticipantToken, registrationController.create);
+router.post('/team', verifyParticipantToken, registrationController.create);
 
 // Auth required
 router.get('/', verifyToken, verifyAdmin, registrationController.listAll);

@@ -125,14 +125,14 @@ npm install
 
 Create `.env` file in `server` folder:
 ```
-DATABASE_URL=postgresql://user:password@localhost:5432/webgiaidau
+SUPABASE_DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.kykkmkauxfypkwcjzuer.supabase.co:5432/postgres
 JWT_SECRET=your-secret-key-here
 PORT=5000
 ```
 
 ### 3. Database Setup
 
-1. Create PostgreSQL database
+1. Create the Supabase PostgreSQL database or use the existing project database
 2. Run database.sql schema:
 ```bash
 psql -U postgres -d webgiaidau -f database.sql

@@ -15,7 +15,6 @@ export interface TournamentInput {
   max_participants: number;
   min_team_size?: number | null;
   max_team_size?: number | null;
-  prize_pool?: number;
   registration_open_at?: string;
   registration_close_at?: string;
   start_at?: string;
@@ -77,11 +76,11 @@ export const tournamentRepository = {
     const result = await pool.query<Tournament>(
       `INSERT INTO tournaments (
           code, name, game_name, game_logo_url, banner_url, participation_type,
-          max_participants, min_team_size, max_team_size, prize_pool,
+         max_participants, min_team_size, max_team_size,
           registration_open_at, registration_close_at,
           start_at, end_at, description, use_external_link, external_registration_url,
           form_schema, created_by, approved_by, status, approved_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        RETURNING *`,
       [
         data.code,
@@ -93,7 +92,6 @@ export const tournamentRepository = {
         data.max_participants,
         data.min_team_size ?? null,
         data.max_team_size ?? null,
-        data.prize_pool ?? 0,
         data.registration_open_at,
         data.registration_close_at,
         data.start_at,
@@ -120,12 +118,12 @@ export const tournamentRepository = {
     const result = await pool.query<Tournament>(
       `UPDATE tournaments SET
           name=$1, game_name=$2, game_logo_url=$3, banner_url=$4, participation_type=$5,
-          max_participants=$6, min_team_size=$7, max_team_size=$8, prize_pool=$9,
-          registration_open_at=$10, registration_close_at=$11,
-          start_at=$12, end_at=$13, description=$14, use_external_link=$15,
-          external_registration_url=$16, form_schema=$17, status=$18,
-          approved_by=$19, approved_at=$20, updated_at=NOW()
-       WHERE id=$21 RETURNING *`,
+         max_participants=$6, min_team_size=$7, max_team_size=$8,
+         registration_open_at=$9, registration_close_at=$10,
+         start_at=$11, end_at=$12, description=$13, use_external_link=$14,
+         external_registration_url=$15, form_schema=$16, status=$17,
+         approved_by=$18, approved_at=$19, updated_at=NOW()
+       WHERE id=$20 RETURNING *`,
       [
         merged.name,
         merged.game_name,
@@ -135,7 +133,6 @@ export const tournamentRepository = {
         merged.max_participants,
         merged.min_team_size,
         merged.max_team_size,
-        merged.prize_pool,
         merged.registration_open_at,
         merged.registration_close_at,
         merged.start_at,
