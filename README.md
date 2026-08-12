@@ -60,6 +60,7 @@ Server chạy tại `http://localhost:5000`.
 | **Đăng ký** | `POST /api/registrations` | Đăng ký tham gia giải |
 | | `GET /api/my-registrations` | Đăng ký của giải do user tạo |
 | **Admin** | `GET /api/admin/stats` | Thống kê dashboard |
+| | `GET /api/admin/dashboard` | Dữ liệu khởi tạo dashboard sau login |
 | | CRUD `/api/admin/users` · `/api/admin/ctvs` | Quản lý user & CTV |
 | **Upload** | `POST /api/upload/banner` | Upload banner giải |
 

@@ -5,19 +5,19 @@ import { env } from '../config/env.ts';
 import type { AuthenticatedParticipantRequest, AuthenticatedRequest } from '../middleware/auth.ts';
 import { participantRepository } from '../repositories/participant.ts';
 import { userRepository } from '../repositories/user.ts';
-import { resolveDutIdentity } from '../utils/dutIdentity.ts';
+import { resolveDutIdentity, validateDutStudentId, generateFreeParticipantId } from '../utils/dutIdentity.ts';
 import type { ParticipantAccountType, SafeParticipant, SafeUser, UserRole } from '../types/index.ts';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 import { created, fail, ok } from '../utils/response.ts';
 
 interface RegisterBody {
-  email?: string;
+  username?: string;
   password?: string;
   full_name?: string;
 }
 
 interface LoginBody {
-  email?: string;
+  username?: string;
   password?: string;
 }
 
@@ -76,9 +76,15 @@ function toSafeParticipant(participant: {
 }
 
 /** Sinh JWT cho user hoặc participant. */
-function signToken(user: { id: string; email: string | null; full_name: string; role: UserRole }): string {
+function signToken(user: { id: string; username?: string | null; email?: string | null; full_name: string; role: UserRole }): string {
   return jwt.sign(
-    { kind: 'user', id: user.id, email: user.email ?? undefined, full_name: user.full_name, role: user.role },
+    {
+      kind: 'user',
+      id: user.id,
+      username: user.username ?? user.email ?? undefined,
+      full_name: user.full_name,
+      role: user.role,
+    },
     env.jwtSecret,
     { expiresIn: env.jwtExpire as jwt.SignOptions['expiresIn'] },
   );
@@ -105,19 +111,19 @@ function signParticipantToken(participant: {
 
 /** Đăng ký tài khoản (chỉ sử dụng từ backend để tạo admin). */
 export const register = asyncHandler(async (req, res: Response) => {
-  const { email, password, full_name } = req.body as RegisterBody;
+  const { username, password, full_name } = req.body as RegisterBody;
 
-  if (!email || !password || !full_name) {
+  if (!username || !password || !full_name) {
     return fail(res, 'Tất cả trường là bắt buộc', 400);
   }
 
-  if (await userRepository.emailExists(email)) {
-    return fail(res, 'Email đã tồn tại', 400);
+  if (await userRepository.usernameExists(username)) {
+    return fail(res, 'Tên đăng nhập đã tồn tại', 400);
   }
 
   const password_hash = await bcryptjs.hash(password, 10);
   const user = await userRepository.create({
-    email,
+    username,
     password_hash,
     full_name,
     role: 'admin',
@@ -127,17 +133,17 @@ export const register = asyncHandler(async (req, res: Response) => {
   return created(res, user as SafeUserRow, 'Tài khoản admin được tạo thành công');
 });
 
-/** Đăng nhập — trả JWT token + thông tin user (admin/ctv qua email). */
+/** Đăng nhập — trả JWT token + thông tin user (admin/ctv bằng username). */
 export const login = asyncHandler(async (req, res: Response) => {
-  const { email, password } = req.body as LoginBody;
+  const { username, password } = req.body as LoginBody;
 
-  if (!email || !password) {
-    return fail(res, 'Email và mật khẩu là bắt buộc', 400);
+  if (!username || !password) {
+    return fail(res, 'Tên đăng nhập và mật khẩu là bắt buộc', 400);
   }
 
-  const user = await userRepository.findByEmail(email);
+  const user = await userRepository.findByUsername(username);
   if (!user) {
-    return fail(res, 'Email hoặc mật khẩu không đúng', 401);
+    return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401);
   }
 
   if (!['admin', 'ctv'].includes(user.role)) {
@@ -146,7 +152,7 @@ export const login = asyncHandler(async (req, res: Response) => {
 
   const isValidPassword = await bcryptjs.compare(password, user.password_hash);
   if (!isValidPassword) {
-    return fail(res, 'Email hoặc mật khẩu không đúng', 401);
+    return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401);
   }
 
   if (!user.is_active) {
@@ -154,14 +160,16 @@ export const login = asyncHandler(async (req, res: Response) => {
   }
 
   const token = signToken(user);
+  const redirectTo = user.role === 'admin' ? 'admin-dashboard' : 'ctv-dashboard';
 
   return res.json({
     success: true,
     message: 'Đăng nhập thành công',
     token,
+    redirectTo,
     user: {
       id: user.id,
-      email: user.email,
+      username: user.username ?? user.email ?? null,
       full_name: user.full_name,
       role: user.role,
     },
@@ -177,10 +185,10 @@ export const dutRegister = asyncHandler(async (req, res: Response) => {
     return fail(res, 'student_id, mật khẩu và họ tên là bắt buộc', 400);
   }
 
-  const sid = student_id.trim().toUpperCase();
-  const student_idRegex = /^\d{8,15}$/;
-  if (!student_idRegex.test(sid)) {
-    return fail(res, 'student_id không hợp lệ (chỉ chấp nhận số, 8-15 ký tự)', 400);
+  const sid = student_id.trim();
+  const validation = validateDutStudentId(sid);
+  if (!validation.isValid) {
+    return fail(res, validation.error || 'student_id không hợp lệ', 400);
   }
 
   if (password.length < 6) {
@@ -192,7 +200,6 @@ export const dutRegister = asyncHandler(async (req, res: Response) => {
     return fail(res, 'student_id đã được đăng ký', 409);
   }
 
-  const identity = resolveDutIdentity(sid);
   const password_hash = await bcryptjs.hash(password, 10);
   const participant = await participantRepository.create({
     id: sid,
@@ -200,8 +207,8 @@ export const dutRegister = asyncHandler(async (req, res: Response) => {
     username: sid,
     password_hash,
     full_name: full_name.trim(),
-    class_name: identity.class_name,
-    faculty_name: identity.faculty_name,
+    class_name: `DUT-${sid.slice(0, 3)}`,
+    faculty_name: validation.faculty_name,
   });
 
   const token = signParticipantToken(participant as SafeParticipantRow);
@@ -242,17 +249,7 @@ export const dutLogin = asyncHandler(async (req, res: Response) => {
     participant: toSafeParticipant(participant),
   });
 });
-function generateFreeParticipantId(): string {
-  // 1. Lấy 4 số của năm hiện tại
-  const year = new Date().getFullYear().toString(); 
-  
-  // 2. Random 5 số (từ 00000 đến 99999). 
-  // Dùng padStart để đảm bảo nếu random ra số 7 thì nó sẽ biến thành '00007'
-  const random5 = Math.floor(Math.random() * 100000).toString().padStart(5, '0'); 
-  
-  // 3. Ghép lại thành chuỗi 9 ký tự
-  return year + random5; 
-}
+
 /** Đăng ký luồng tự do. */
 export const freeRegister = asyncHandler(async (req, res: Response) => {
   const { username, password, full_name, class_name, faculty_name } = req.body as FreeRegisterBody;
@@ -289,6 +286,7 @@ export const freeRegister = asyncHandler(async (req, res: Response) => {
 
   const token = signParticipantToken(participant as SafeParticipantRow);
 
+  
   return res.status(201).json({
     success: true,
     message: 'Đăng ký thành công!',

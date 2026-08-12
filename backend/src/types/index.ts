@@ -15,7 +15,8 @@ export type ParticipationType = 'individual' | 'team';
 
 export interface User {
   id: string;
-  email: string;
+  username?: string | null;
+  email?: string | null;
   password_hash: string;
   full_name: string;
   role: UserRole;
@@ -27,7 +28,8 @@ export interface User {
 /** User object WITHOUT sensitive fields (password_hash). */
 export interface SafeUser {
   id: string;
-  email: string;
+  username?: string | null;
+  email?: string | null;
   full_name: string;
   role: UserRole;
   is_active: boolean;

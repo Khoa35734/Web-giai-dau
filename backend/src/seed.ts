@@ -11,15 +11,15 @@ const PASSWORD = '123456';
 // ===========================
 // Helper
 // ===========================
-async function createUser(email: string, full_name: string, role: 'admin' | 'ctv') {
-  const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+async function createUser(username: string, full_name: string, role: 'admin' | 'ctv') {
+  const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
   if (existing.rows.length > 0) return existing.rows[0].id;
 
   const hash = await bcryptjs.hash(PASSWORD, 10);
   const result = await pool.query(
-    `INSERT INTO users (email, password_hash, full_name, role, is_active)
+    `INSERT INTO users (username, password_hash, full_name, role, is_active)
      VALUES ($1, $2, $3, $4, true) RETURNING id`,
-    [email, hash, full_name, role],
+    [username, hash, full_name, role],
   );
   console.log(`  ✅ User: ${full_name} (${role})`);
   return result.rows[0].id;
