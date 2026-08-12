@@ -1,14 +1,25 @@
 import type { Response } from 'express';
 import bcryptjs from 'bcryptjs';
 import { userRepository } from '../repositories/user.ts';
+import { participantRepository } from '../repositories/participant.ts';
 import { statsRepository } from '../repositories/stats.ts';
-import type { SafeUser, UserRole } from '../types/index.ts';
+import type { SafeUser, UserRole, ParticipantAccountType } from '../types/index.ts';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 import { paramId } from '../utils/param.ts';
 import { created, fail, ok } from '../utils/response.ts';
+import { generateFreeParticipantId, validateDutStudentId } from '../utils/dutIdentity.ts';
+
+interface ParticipantBody {
+  account_type?: ParticipantAccountType;
+  username?: string;
+  password?: string;
+  full_name?: string;
+  class_name?: string;
+  faculty_name?: string;
+}
 
 interface UserBody {
-  email?: string;
+  username?: string;
   password?: string;
   full_name?: string;
   role?: UserRole;
@@ -19,13 +30,31 @@ interface SafeUserRow extends SafeUser {
   role: UserRole;
 }
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+interface AdminDashboardData {
+  user: SafeUserRow;
+  stats: Awaited<ReturnType<typeof statsRepository.get>>;
+}
+
 const VALID_ROLES: UserRole[] = ['admin', 'ctv'];
 
 /** Thống kê dashboard (admin). */
 export const stats = asyncHandler(async (_req, res: Response) => {
   const data = await statsRepository.get();
   return res.json({ success: true, data });
+});
+
+/** Dữ liệu khởi tạo dashboard (admin) sau khi đăng nhập. */
+export const dashboard = asyncHandler(async (req: import('../middleware/auth.ts').AuthenticatedRequest, res: Response) => {
+  const [user, stats] = await Promise.all([
+    userRepository.findSafeById(req.user!.id),
+    statsRepository.get(),
+  ]);
+
+  if (!user) {
+    return fail(res, 'Không tìm thấy người dùng', 404);
+  }
+
+  return ok(res, { user, stats } satisfies AdminDashboardData, 'Dashboard sẵn sàng');
 });
 
 // ===========================
@@ -53,23 +82,20 @@ export const getCtv = asyncHandler(async (req, res: Response) => {
 
 /** Tạo tài khoản CTV (admin). */
 export const createCtv = asyncHandler(async (req, res: Response) => {
-  const { email, password, full_name } = req.body as UserBody;
+  const { username, password, full_name } = req.body as UserBody;
 
-  if (!email || !password || !full_name) {
-    return fail(res, 'Email, mật khẩu và tên đầy đủ là bắt buộc', 400);
-  }
-  if (!EMAIL_REGEX.test(email)) {
-    return fail(res, 'Email không hợp lệ', 400);
+  if (!username || !password || !full_name) {
+    return fail(res, 'Tên đăng nhập, mật khẩu và tên đầy đủ là bắt buộc', 400);
   }
   if (password.length < 6) {
     return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
   }
-  if (await userRepository.emailExists(email)) {
-    return fail(res, 'Email đã tồn tại', 400);
+  if (await userRepository.usernameExists(username)) {
+    return fail(res, 'Tên đăng nhập đã tồn tại', 400);
   }
 
   const password_hash = await bcryptjs.hash(password, 10);
-  const ctv = await userRepository.create({ email, password_hash, full_name, role: 'ctv', is_active: true });
+  const ctv = await userRepository.create({ username, password_hash, full_name, role: 'ctv', is_active: true });
 
   return created(res, ctv, 'Tài khoản CTV được tạo thành công');
 });
@@ -77,19 +103,16 @@ export const createCtv = asyncHandler(async (req, res: Response) => {
 /** Cập nhật CTV (admin). */
 export const updateCtv = asyncHandler(async (req, res: Response) => {
   const id = paramId(req);
-  const { email, full_name, password, is_active } = req.body as UserBody;
+  const { username, full_name, password, is_active } = req.body as UserBody;
 
   const ctv = await userRepository.findCtvById(id);
   if (!ctv) {
     return fail(res, 'Không tìm thấy tài khoản CTV', 404);
   }
 
-  if (email && email !== ctv.email) {
-    if (await userRepository.emailExists(email, id)) {
-      return fail(res, 'Email đã được sử dụng', 400);
-    }
-    if (!EMAIL_REGEX.test(email)) {
-      return fail(res, 'Email không hợp lệ', 400);
+  if (username && username !== ctv.username) {
+    if (await userRepository.usernameExists(username, id)) {
+      return fail(res, 'Tên đăng nhập đã được sử dụng', 400);
     }
   }
 
@@ -102,7 +125,7 @@ export const updateCtv = asyncHandler(async (req, res: Response) => {
   }
 
   const updated = await userRepository.update(id, {
-    email: email ?? ctv.email,
+    username: username ?? ctv.username ?? null,
     full_name: full_name ?? ctv.full_name,
     password_hash,
     is_active: is_active ?? ctv.is_active,
@@ -148,11 +171,12 @@ export const deleteCtv = asyncHandler(async (req, res: Response) => {
 
 /** Danh sách user (admin) — phân trang, tìm kiếm, lọc role. */
 export const listUsers = asyncHandler(async (req, res: Response) => {
-  const { search, role = 'all', page = '1', limit = '10' } = req.query as Record<string, string>;
+  const { search, role = 'all', status, ban_status, page = '1', limit = '10' } = req.query as Record<string, string>;
   const currentPage = Math.max(1, parseInt(page, 10) || 1);
   const pageSize = Math.max(1, parseInt(limit, 10) || 10);
+  const statusFilter = status || (ban_status === 'banned' ? 'inactive' : ban_status === 'active' ? 'active' : undefined);
 
-  const { rows, pagination } = await userRepository.list({ search, role }, currentPage, pageSize);
+  const { rows, pagination } = await userRepository.list({ search, role, status: statusFilter }, currentPage, pageSize);
   return res.json({ success: true, data: rows, pagination });
 });
 
@@ -167,26 +191,23 @@ export const getUser = asyncHandler(async (req, res: Response) => {
 
 /** Tạo user (admin) — chọn role admin/ctv. */
 export const createUser = asyncHandler(async (req, res: Response) => {
-  const { email, password, full_name, role = 'ctv' } = req.body as UserBody;
+  const { username, password, full_name, role = 'ctv' } = req.body as UserBody;
 
-  if (!email || !password || !full_name) {
-    return fail(res, 'Email, mật khẩu và tên đầy đủ là bắt buộc', 400);
+  if (!username || !password || !full_name) {
+    return fail(res, 'Tên đăng nhập, mật khẩu và tên đầy đủ là bắt buộc', 400);
   }
   if (!VALID_ROLES.includes(role ?? 'ctv')) {
     return fail(res, 'Vai trò không hợp lệ (admin/ctv)', 400);
   }
-  if (!EMAIL_REGEX.test(email)) {
-    return fail(res, 'Email không hợp lệ', 400);
-  }
   if (password.length < 6) {
     return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
   }
-  if (await userRepository.emailExists(email)) {
-    return fail(res, 'Email đã tồn tại', 400);
+  if (await userRepository.usernameExists(username)) {
+    return fail(res, 'Tên đăng nhập đã tồn tại', 400);
   }
 
   const password_hash = await bcryptjs.hash(password, 10);
-  const user = await userRepository.create({ email, password_hash, full_name, role: role ?? 'ctv', is_active: true });
+  const user = await userRepository.create({ username, password_hash, full_name, role: role ?? 'ctv', is_active: true });
 
   return created(res, user, `Tài khoản ${role === 'admin' ? 'Admin' : 'CTV'} được tạo thành công`);
 });
@@ -194,19 +215,16 @@ export const createUser = asyncHandler(async (req, res: Response) => {
 /** Cập nhật user (admin). */
 export const updateUser = asyncHandler(async (req, res: Response) => {
   const id = paramId(req);
-  const { email, full_name, password, role, is_active } = req.body as UserBody;
+  const { username, full_name, password, role, is_active } = req.body as UserBody;
 
   const user = await userRepository.findById(id);
   if (!user) {
     return fail(res, 'Không tìm thấy người dùng', 404);
   }
 
-  if (email && email !== user.email) {
-    if (await userRepository.emailExists(email, id)) {
-      return fail(res, 'Email đã được sử dụng', 400);
-    }
-    if (!EMAIL_REGEX.test(email)) {
-      return fail(res, 'Email không hợp lệ', 400);
+  if (username && username !== user.username) {
+    if (await userRepository.usernameExists(username, id)) {
+      return fail(res, 'Tên đăng nhập đã được sử dụng', 400);
     }
   }
   if (role && !VALID_ROLES.includes(role)) {
@@ -222,7 +240,7 @@ export const updateUser = asyncHandler(async (req, res: Response) => {
   }
 
   const updated = await userRepository.update(id, {
-    email: email ?? user.email,
+    username: username ?? user.username ?? null,
     full_name: full_name ?? user.full_name,
     password_hash,
     role: role ?? user.role,
@@ -262,3 +280,145 @@ export const deleteUser = asyncHandler(async (req, res: Response) => {
   await userRepository.remove(id);
   return ok(res, undefined, 'Người dùng được xóa thành công');
 });
+
+// ===========================
+// PARTICIPANT MANAGEMENT (ADMIN)
+// ===========================
+
+/** Danh sách participant (admin) — phân trang, tìm kiếm, lọc account_type. */
+export const listParticipants = asyncHandler(async (req, res: Response) => {
+  const { search, account_type, page = '1', limit = '10' } = req.query as Record<string, string>;
+  const currentPage = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = Math.max(1, parseInt(limit, 10) || 10);
+
+  const { rows, pagination } = await participantRepository.list({ search, account_type }, currentPage, pageSize);
+  return res.json({ success: true, data: rows, pagination });
+});
+
+/** Chi tiết participant (admin). */
+export const getParticipant = asyncHandler(async (req, res: Response) => {
+  const participant = await participantRepository.findSafeById(paramId(req));
+  if (!participant) {
+    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
+  }
+  return ok(res, participant);
+});
+
+/** Tạo participant mới (admin). */
+export const createParticipant = asyncHandler(async (req, res: Response) => {
+  const { account_type = 'dut', username, password, full_name, class_name, faculty_name } = req.body as ParticipantBody;
+
+  if (!username || !password || !full_name) {
+    return fail(res, 'Tên đăng nhập / MSSV, mật khẩu và tên đầy đủ là bắt buộc', 400);
+  }
+  if (!['dut', 'free'].includes(account_type)) {
+    return fail(res, 'Loại tài khoản không hợp lệ (dut/free)', 400);
+  }
+  if (password.length < 6) {
+    return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
+  }
+
+  const cleanUsername = username.trim();
+  let finalId: string;
+  let finalFaculty: string | null = faculty_name?.trim() || null;
+  let finalClass: string | null = class_name?.trim() || null;
+
+  if (account_type === 'dut') {
+    const validation = validateDutStudentId(cleanUsername);
+    if (!validation.isValid) {
+      return fail(res, validation.error || 'MSSV không hợp lệ', 400);
+    }
+    finalId = cleanUsername; // Lấy MSSV làm ID tài khoản luôn
+    finalFaculty = validation.faculty_name;
+  } else {
+    finalId = generateFreeParticipantId(); // Tự động sinh ID ngẫu nhiên cho luồng tự do
+    finalFaculty = null;
+    finalClass = null;
+  }
+
+  if (await participantRepository.usernameExists(cleanUsername)) {
+    return fail(res, account_type === 'dut' ? 'MSSV này đã được đăng ký tài khoản' : 'Tên đăng nhập đã tồn tại', 400);
+  }
+
+  const password_hash = await bcryptjs.hash(password, 10);
+  const participant = await participantRepository.create({
+    id: finalId,
+    account_type,
+    username: cleanUsername,
+    password_hash,
+    full_name: full_name.trim(),
+    class_name: finalClass,
+    faculty_name: finalFaculty,
+  });
+
+  return created(res, participant, 'Tài khoản người dùng (participant) được tạo thành công');
+});
+
+/** Cập nhật participant (admin). */
+export const updateParticipant = asyncHandler(async (req, res: Response) => {
+  const id = paramId(req);
+  const { account_type, username, password, full_name, class_name, faculty_name } = req.body as ParticipantBody;
+
+  const participant = await participantRepository.findById(id);
+  if (!participant) {
+    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
+  }
+
+  const targetAccountType = account_type ?? participant.account_type;
+  const cleanUsername = username ? username.trim() : participant.username;
+  let finalFaculty: string | null = faculty_name !== undefined ? (faculty_name?.trim() || null) : participant.faculty_name;
+  let finalClass: string | null = class_name !== undefined ? (class_name?.trim() || null) : participant.class_name;
+
+  if (targetAccountType === 'dut') {
+    if (username) {
+      const validation = validateDutStudentId(cleanUsername);
+      if (!validation.isValid) {
+        return fail(res, validation.error || 'MSSV không hợp lệ', 400);
+      }
+      finalFaculty = validation.faculty_name;
+    }
+  } else {
+    finalFaculty = null;
+    finalClass = null;
+  }
+
+  if (username && username !== participant.username) {
+    if (await participantRepository.usernameExists(cleanUsername, id)) {
+      return fail(res, 'Tên đăng nhập / MSSV đã được sử dụng', 400);
+    }
+  }
+
+  let password_hash: string | undefined;
+  if (password) {
+    if (password.length < 6) {
+      return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
+    }
+    password_hash = await bcryptjs.hash(password, 10);
+  }
+
+  const updated = await participantRepository.update(id, {
+    account_type: targetAccountType,
+    username: cleanUsername,
+    full_name: full_name ? full_name.trim() : participant.full_name,
+    class_name: finalClass,
+    faculty_name: finalFaculty,
+    password_hash,
+  });
+
+  return ok(res, updated, 'Cập nhật người dùng (participant) thành công');
+});
+
+
+/** Xóa participant (admin). */
+export const deleteParticipant = asyncHandler(async (req, res: Response) => {
+  const id = paramId(req);
+
+  const participant = await participantRepository.findById(id);
+  if (!participant) {
+    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
+  }
+
+  await participantRepository.remove(id);
+  return ok(res, undefined, 'Xóa người dùng (participant) thành công');
+});
+

@@ -51,7 +51,7 @@ export function verifyParticipantToken(
       res.status(403).json({ success: false, message: 'Token user không hợp lệ cho route này' });
       return;
     }
-    req.participant = decoded;
+    req.participant = decoded as JwtPayload & { kind: 'participant' };
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Invalid token' });
