@@ -5,9 +5,7 @@
 
 export type UserRole = 'admin' | 'ctv';
 
-export type ParticipantAccountType = 'internal' | 'external' | 'dut' | 'free' | 'dut_student';
-
-export type ParticipantStatus = 'pending' | 'approved' | 'rejected';
+export type ParticipantAccountType = 'dut' | 'free';
 
 export type TournamentStatus = 'pending' | 'approved' | 'rejected' | 'active' | 'completed';
 
@@ -41,43 +39,23 @@ export interface SafeUser {
 
 export interface Participant {
   id: string;
-  username: string | null;
+  account_type: ParticipantAccountType;
+  username: string;
   password_hash: string;
   full_name: string;
-  student_id: string | null;
-  email: string | null;
-  phone_number: string | null;
-  university_name: string | null;
-  faculty_name: string | null;
   class_name: string | null;
-  account_type: ParticipantAccountType;
-  student_card_url: string | null;
-  selfie_with_student_card_url: string | null;
-  status: ParticipantStatus;
-  approved_by: string | null;
-  approved_at: string | null;
-  rejection_reason: string | null;
+  faculty_name: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface SafeParticipant {
   id: string;
-  username: string | null;
-  full_name: string;
-  student_id: string | null;
-  email: string | null;
-  phone_number: string | null;
-  university_name: string | null;
-  faculty_name: string | null;
-  class_name: string | null;
   account_type: ParticipantAccountType;
-  student_card_url: string | null;
-  selfie_with_student_card_url: string | null;
-  status: ParticipantStatus;
-  approved_by?: string | null;
-  approved_at?: string | null;
-  rejection_reason?: string | null;
+  username: string;
+  full_name: string;
+  class_name: string | null;
+  faculty_name: string | null;
   created_at?: string;
   updated_at?: string;
 }
