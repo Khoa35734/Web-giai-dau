@@ -145,4 +145,4 @@ export const participantRepository = {
   async remove(id: string): Promise<void> {
     await pool.query('DELETE FROM participants WHERE id = $1', [id]);
   },
-};
+};

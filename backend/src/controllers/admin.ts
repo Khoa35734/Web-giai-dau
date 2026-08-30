@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import bcryptjs from 'bcryptjs';
+import type { AuthenticatedRequest } from '../middleware/auth.ts';
 import { userRepository } from '../repositories/user.ts';
 import { participantRepository } from '../repositories/participant.ts';
 import { statsRepository } from '../repositories/stats.ts';

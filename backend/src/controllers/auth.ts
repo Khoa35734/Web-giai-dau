@@ -109,7 +109,33 @@ function signParticipantToken(participant: {
   );
 }
 
-/** Đăng ký tài khoản (chỉ sử dụng từ backend để tạo admin). */
+/** Sinh JWT cho Sinh viên (Participant) đã được duyệt. */
+function signParticipantToken(participant: {
+  id: string;
+  username?: string | null;
+  full_name: string;
+  account_type: ParticipantAccountType;
+  student_id?: string | null;
+  email?: string | null;
+}): string {
+  return jwt.sign(
+    {
+      kind: 'participant',
+      id: participant.id,
+      username: participant.username ?? participant.student_id ?? participant.email ?? undefined,
+      full_name: participant.full_name,
+      account_type: participant.account_type,
+    },
+    env.jwtSecret,
+    { expiresIn: env.jwtExpire as jwt.SignOptions['expiresIn'] },
+  );
+}
+
+// =============================================================================
+// 1. ADMIN & CTV AUTHENTICATION
+// =============================================================================
+
+/** Đăng ký tài khoản Admin (chỉ dùng nội bộ). */
 export const register = asyncHandler(async (req, res: Response) => {
   const { username, password, full_name } = req.body as RegisterBody;
 
@@ -130,7 +156,7 @@ export const register = asyncHandler(async (req, res: Response) => {
     is_active: true,
   });
 
-  return created(res, user as SafeUserRow, 'Tài khoản admin được tạo thành công');
+  return created(res, user, 'Tài khoản admin được tạo thành công');
 });
 
 /** Đăng nhập — trả JWT token + thông tin user (admin/ctv bằng username). */
@@ -147,7 +173,7 @@ export const login = asyncHandler(async (req, res: Response) => {
   }
 
   if (!['admin', 'ctv'].includes(user.role)) {
-    return fail(res, 'Chỉ admin và CTV có thể đăng nhập', 403);
+    return fail(res, 'Chỉ admin và CTV có thể đăng nhập tại đây', 403);
   }
 
   const isValidPassword = await bcryptjs.compare(password, user.password_hash);
@@ -184,6 +210,12 @@ export const dutRegister = asyncHandler(async (req, res: Response) => {
   if (!student_id || !password || !full_name) {
     return fail(res, 'student_id, mật khẩu và họ tên là bắt buộc', 400);
   }
+  return ok(res, user);
+});
+
+// =============================================================================
+// 2. SINH VIÊN KYC & AUTHENTICATION (SV-01, SV-02, SV-03, SV-04)
+// =============================================================================
 
   const sid = student_id.trim();
   const validation = validateDutStudentId(sid);
@@ -200,6 +232,7 @@ export const dutRegister = asyncHandler(async (req, res: Response) => {
     return fail(res, 'student_id đã được đăng ký', 409);
   }
 
+  // Băm mật khẩu bằng bcryptjs (salt 10)
   const password_hash = await bcryptjs.hash(password, 10);
   const participant = await participantRepository.create({
     id: sid,
@@ -316,7 +349,10 @@ export const freeLogin = asyncHandler(async (req, res: Response) => {
 
   const token = signParticipantToken(participant as SafeParticipantRow);
 
-  return res.json({
+  // 3. Nếu tài khoản ĐÃ ĐƯỢC PHÊ DUYỆT (approved)
+  const token = signParticipantToken(participant);
+
+  return res.status(200).json({
     success: true,
     message: 'Đăng nhập thành công',
     token,
@@ -324,13 +360,56 @@ export const freeLogin = asyncHandler(async (req, res: Response) => {
   });
 });
 
-/** Lấy thông tin user hiện tại (yêu cầu token). */
-export const getMe = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const user = await userRepository.findSafeById(req.user!.id);
-  if (!user) {
-    return fail(res, 'Không tìm thấy người dùng', 404);
+/**
+ * [SRS 3.1 SV-03] LẤY HỒ SƠ CÁ NHÂN SINH VIÊN HIỆN TẠI
+ */
+export const getParticipantMe = asyncHandler(async (req: AuthenticatedParticipantRequest, res: Response) => {
+  const participant = await participantRepository.findSafeById(req.participant!.id);
+  if (!participant) {
+    return fail(res, 'Không tìm thấy hồ sơ sinh viên', 404);
   }
-  return ok(res, user);
+  return ok(res, participant);
+});
+
+/**
+ * [SRS 3.1 SV-03] CẬP NHẬT HỒ SƠ CÁ NHÂN SINH VIÊN
+ * Cho phép cập nhật SĐT, Lớp, Khoa và Đổi mật khẩu
+ */
+export const updateParticipantProfile = asyncHandler(async (req: AuthenticatedParticipantRequest, res: Response) => {
+  const participantId = req.participant!.id;
+  const { full_name, phone_number, class_name, faculty_name, old_password, password } = req.body as UpdateProfileBody;
+
+  const current = await participantRepository.findById(participantId);
+  if (!current) {
+    return fail(res, 'Không tìm thấy tài khoản sinh viên', 404);
+  }
+
+  let newPasswordHash: string | undefined;
+
+  // Nếu muốn đổi mật khẩu
+  if (password) {
+    if (!old_password) {
+      return fail(res, 'Vui lòng nhập mật khẩu hiện tại để đổi mật khẩu mới', 400);
+    }
+    const isMatch = await bcryptjs.compare(old_password, current.password_hash);
+    if (!isMatch) {
+      return fail(res, 'Mật khẩu hiện tại không chính xác', 400);
+    }
+    if (password.length < 6) {
+      return fail(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400);
+    }
+    newPasswordHash = await bcryptjs.hash(password, 10);
+  }
+
+  const updated = await participantRepository.updateProfile(participantId, {
+    full_name: full_name?.trim() || current.full_name,
+    phone_number: phone_number !== undefined ? (phone_number?.trim() || null) : current.phone_number,
+    class_name: class_name !== undefined ? (class_name?.trim() || null) : current.class_name,
+    faculty_name: faculty_name !== undefined ? (faculty_name?.trim() || null) : current.faculty_name,
+    password_hash: newPasswordHash,
+  });
+
+  return ok(res, updated, 'Cập nhật thông tin cá nhân thành công');
 });
 
 /** Lấy thông tin participant hiện tại (yêu cầu token participant). */
