@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import bcryptjs from 'bcryptjs';
+import type { AuthenticatedRequest } from '../middleware/auth.ts';
 import { userRepository } from '../repositories/user.ts';
 import { participantRepository } from '../repositories/participant.ts';
 import { statsRepository } from '../repositories/stats.ts';
@@ -365,12 +366,12 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
   }
 
   const targetAccountType = account_type ?? participant.account_type;
-  const cleanUsername = username ? username.trim() : participant.username;
+  const cleanUsername = username ? username.trim() : (participant.username || '');
   let finalFaculty: string | null = faculty_name !== undefined ? (faculty_name?.trim() || null) : participant.faculty_name;
   let finalClass: string | null = class_name !== undefined ? (class_name?.trim() || null) : participant.class_name;
 
-  if (targetAccountType === 'dut') {
-    if (username) {
+  if (targetAccountType === 'dut' || targetAccountType === 'internal') {
+    if (cleanUsername) {
       const validation = validateDutStudentId(cleanUsername);
       if (!validation.isValid) {
         return fail(res, validation.error || 'MSSV không hợp lệ', 400);
@@ -382,7 +383,7 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
     finalClass = null;
   }
 
-  if (username && username !== participant.username) {
+  if (cleanUsername && cleanUsername !== participant.username) {
     if (await participantRepository.usernameExists(cleanUsername, id)) {
       return fail(res, 'Tên đăng nhập / MSSV đã được sử dụng', 400);
     }
@@ -421,4 +422,41 @@ export const deleteParticipant = asyncHandler(async (req, res: Response) => {
   await participantRepository.remove(id);
   return ok(res, undefined, 'Xóa người dùng (participant) thành công');
 });
+
+/** [SRS 3.2 AD-02] Duyệt hoặc từ chối hồ sơ KYC sinh viên. */
+export const reviewParticipant = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { participant_id, id: bodyId, action, rejection_reason } = req.body as {
+    participant_id?: string;
+    id?: string;
+    action?: 'approve' | 'reject';
+    rejection_reason?: string;
+  };
+  const rawId = req.params.id || participant_id || bodyId;
+  const targetId = Array.isArray(rawId) ? rawId[0] : rawId;
+
+  if (!targetId) {
+    return fail(res, 'ID sinh viên là bắt buộc', 400);
+  }
+  if (!action || !['approve', 'reject'].includes(action)) {
+    return fail(res, 'Hành động duyệt không hợp lệ (approve/reject)', 400);
+  }
+
+  const current = await participantRepository.findById(targetId);
+  if (!current) {
+    return fail(res, 'Không tìm thấy hồ sơ sinh viên', 404);
+  }
+
+  const updated = await participantRepository.review(targetId, {
+    status: action === 'approve' ? 'approved' : 'rejected',
+    rejection_reason: action === 'reject' ? (rejection_reason || 'Thông tin xác minh thẻ SV không hợp lệ') : null,
+    approved_by: req.user!.id,
+  });
+
+  return ok(
+    res,
+    updated,
+    action === 'approve' ? 'Phê duyệt hồ sơ sinh viên thành công' : 'Đã từ chối hồ sơ sinh viên',
+  );
+});
+
 

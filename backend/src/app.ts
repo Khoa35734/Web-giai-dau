@@ -32,6 +32,12 @@ app.use(
   express.static(path.join(process.cwd(), 'uploads', 'banners'), { maxAge: '7d' }),
 );
 
+// Document / KYC uploads
+app.use(
+  '/api/documents',
+  express.static(path.join(process.cwd(), 'uploads', 'documents'), { maxAge: '7d' }),
+);
+
 // ===========================
 // API ROUTES
 // ===========================

@@ -32,6 +32,8 @@ router.get('/participants/:id', adminController.getParticipant);
 router.post('/participants', adminController.createParticipant);
 router.put('/participants/:id', adminController.updateParticipant);
 router.delete('/participants/:id', adminController.deleteParticipant);
+router.post('/participants/review', adminController.reviewParticipant);
+router.patch('/participants/:id/review', adminController.reviewParticipant);
 
 export default router;
 
