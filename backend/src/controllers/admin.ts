@@ -2,22 +2,14 @@ import type { Response } from 'express';
 import bcryptjs from 'bcryptjs';
 import type { AuthenticatedRequest } from '../middleware/auth.ts';
 import { userRepository } from '../repositories/user.ts';
-import { participantRepository } from '../repositories/participant.ts';
 import { statsRepository } from '../repositories/stats.ts';
-import type { SafeUser, UserRole, ParticipantAccountType } from '../types/index.ts';
+import type { SafeUser, UserRole } from '../types/index.ts';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 import { paramId } from '../utils/param.ts';
 import { created, fail, ok } from '../utils/response.ts';
-import { generateFreeParticipantId, validateDutStudentId } from '../utils/dutIdentity.ts';
 
-interface ParticipantBody {
-  account_type?: ParticipantAccountType;
-  username?: string;
-  password?: string;
-  full_name?: string;
-  class_name?: string;
-  faculty_name?: string;
-}
+// Re-export Participant Controller methods for unified admin API
+export * from './participant.controller.ts';
 
 interface UserBody {
   username?: string;
@@ -45,7 +37,7 @@ export const stats = asyncHandler(async (_req, res: Response) => {
 });
 
 /** Dữ liệu khởi tạo dashboard (admin) sau khi đăng nhập. */
-export const dashboard = asyncHandler(async (req: import('../middleware/auth.ts').AuthenticatedRequest, res: Response) => {
+export const dashboard = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const [user, stats] = await Promise.all([
     userRepository.findSafeById(req.user!.id),
     statsRepository.get(),
@@ -58,9 +50,9 @@ export const dashboard = asyncHandler(async (req: import('../middleware/auth.ts'
   return ok(res, { user, stats } satisfies AdminDashboardData, 'Dashboard sẵn sàng');
 });
 
-// ===========================
+// =============================================================================
 // CTV MANAGEMENT
-// ===========================
+// =============================================================================
 
 /** Danh sách CTV (admin) — phân trang, tìm kiếm, lọc trạng thái. */
 export const listCtvs = asyncHandler(async (req, res: Response) => {
@@ -166,9 +158,9 @@ export const deleteCtv = asyncHandler(async (req, res: Response) => {
   return ok(res, undefined, 'Tài khoản CTV được xóa thành công');
 });
 
-// ===========================
+// =============================================================================
 // USER MANAGEMENT (ADMIN)
-// ===========================
+// =============================================================================
 
 /** Danh sách user (admin) — phân trang, tìm kiếm, lọc role. */
 export const listUsers = asyncHandler(async (req, res: Response) => {
@@ -281,145 +273,3 @@ export const deleteUser = asyncHandler(async (req, res: Response) => {
   await userRepository.remove(id);
   return ok(res, undefined, 'Người dùng được xóa thành công');
 });
-
-// ===========================
-// PARTICIPANT MANAGEMENT (ADMIN)
-// ===========================
-
-/** Danh sách participant (admin) — phân trang, tìm kiếm, lọc account_type. */
-export const listParticipants = asyncHandler(async (req, res: Response) => {
-  const { search, account_type, page = '1', limit = '10' } = req.query as Record<string, string>;
-  const currentPage = Math.max(1, parseInt(page, 10) || 1);
-  const pageSize = Math.max(1, parseInt(limit, 10) || 10);
-
-  const { rows, pagination } = await participantRepository.list({ search, account_type }, currentPage, pageSize);
-  return res.json({ success: true, data: rows, pagination });
-});
-
-/** Chi tiết participant (admin). */
-export const getParticipant = asyncHandler(async (req, res: Response) => {
-  const participant = await participantRepository.findSafeById(paramId(req));
-  if (!participant) {
-    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
-  }
-  return ok(res, participant);
-});
-
-/** Tạo participant mới (admin). */
-export const createParticipant = asyncHandler(async (req, res: Response) => {
-  const { account_type = 'dut', username, password, full_name, class_name, faculty_name } = req.body as ParticipantBody;
-
-  if (!username || !password || !full_name) {
-    return fail(res, 'Tên đăng nhập / MSSV, mật khẩu và tên đầy đủ là bắt buộc', 400);
-  }
-  if (!['dut', 'free'].includes(account_type)) {
-    return fail(res, 'Loại tài khoản không hợp lệ (dut/free)', 400);
-  }
-  if (password.length < 6) {
-    return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
-  }
-
-  const cleanUsername = username.trim();
-  let finalId: string;
-  let finalFaculty: string | null = faculty_name?.trim() || null;
-  let finalClass: string | null = class_name?.trim() || null;
-
-  if (account_type === 'dut') {
-    const validation = validateDutStudentId(cleanUsername);
-    if (!validation.isValid) {
-      return fail(res, validation.error || 'MSSV không hợp lệ', 400);
-    }
-    finalId = cleanUsername; // Lấy MSSV làm ID tài khoản luôn
-    finalFaculty = validation.faculty_name;
-  } else {
-    finalId = generateFreeParticipantId(); // Tự động sinh ID ngẫu nhiên cho luồng tự do
-    finalFaculty = null;
-    finalClass = null;
-  }
-
-  if (await participantRepository.usernameExists(cleanUsername)) {
-    return fail(res, account_type === 'dut' ? 'MSSV này đã được đăng ký tài khoản' : 'Tên đăng nhập đã tồn tại', 400);
-  }
-
-  const password_hash = await bcryptjs.hash(password, 10);
-  const participant = await participantRepository.create({
-    id: finalId,
-    account_type,
-    username: cleanUsername,
-    password_hash,
-    full_name: full_name.trim(),
-    class_name: finalClass,
-    faculty_name: finalFaculty,
-  });
-
-  return created(res, participant, 'Tài khoản người dùng (participant) được tạo thành công');
-});
-
-/** Cập nhật participant (admin). */
-export const updateParticipant = asyncHandler(async (req, res: Response) => {
-  const id = paramId(req);
-  const { account_type, username, password, full_name, class_name, faculty_name } = req.body as ParticipantBody;
-
-  const participant = await participantRepository.findById(id);
-  if (!participant) {
-    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
-  }
-
-  const targetAccountType = account_type ?? participant.account_type;
-  const cleanUsername = username ? username.trim() : participant.username;
-  let finalFaculty: string | null = faculty_name !== undefined ? (faculty_name?.trim() || null) : participant.faculty_name;
-  let finalClass: string | null = class_name !== undefined ? (class_name?.trim() || null) : participant.class_name;
-
-  if (targetAccountType === 'dut') {
-    if (username) {
-      const validation = validateDutStudentId(cleanUsername);
-      if (!validation.isValid) {
-        return fail(res, validation.error || 'MSSV không hợp lệ', 400);
-      }
-      finalFaculty = validation.faculty_name;
-    }
-  } else {
-    finalFaculty = null;
-    finalClass = null;
-  }
-
-  if (username && username !== participant.username) {
-    if (await participantRepository.usernameExists(cleanUsername, id)) {
-      return fail(res, 'Tên đăng nhập / MSSV đã được sử dụng', 400);
-    }
-  }
-
-  let password_hash: string | undefined;
-  if (password) {
-    if (password.length < 6) {
-      return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
-    }
-    password_hash = await bcryptjs.hash(password, 10);
-  }
-
-  const updated = await participantRepository.update(id, {
-    account_type: targetAccountType,
-    username: cleanUsername,
-    full_name: full_name ? full_name.trim() : participant.full_name,
-    class_name: finalClass,
-    faculty_name: finalFaculty,
-    password_hash,
-  });
-
-  return ok(res, updated, 'Cập nhật người dùng (participant) thành công');
-});
-
-
-/** Xóa participant (admin). */
-export const deleteParticipant = asyncHandler(async (req, res: Response) => {
-  const id = paramId(req);
-
-  const participant = await participantRepository.findById(id);
-  if (!participant) {
-    return fail(res, 'Không tìm thấy người dùng (participant)', 404);
-  }
-
-  await participantRepository.remove(id);
-  return ok(res, undefined, 'Xóa người dùng (participant) thành công');
-});
-
