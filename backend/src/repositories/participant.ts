@@ -235,6 +235,53 @@ export const participantRepository = {
     return result.rows[0] ?? null;
   },
 
+  async resubmit(
+    id: string,
+    data: {
+      full_name?: string;
+      phone_number?: string | null;
+      university_name?: string | null;
+      student_id?: string | null;
+      class_name?: string | null;
+      faculty_name?: string | null;
+      student_card_url?: string | null;
+      selfie_with_student_card_url?: string | null;
+      password_hash?: string;
+    },
+  ): Promise<SafeParticipant | null> {
+    const result = await pool.query<SafeParticipant>(
+      `UPDATE participants SET
+          full_name = COALESCE($1, full_name),
+          phone_number = COALESCE($2, phone_number),
+          university_name = COALESCE($3, university_name),
+          student_id = COALESCE($4, student_id),
+          class_name = COALESCE($5, class_name),
+          faculty_name = COALESCE($6, faculty_name),
+          student_card_url = COALESCE($7, student_card_url),
+          selfie_with_student_card_url = COALESCE($8, selfie_with_student_card_url),
+          password_hash = COALESCE($9, password_hash),
+          status = 'pending',
+          rejection_reason = NULL,
+          rejected_at = NULL,
+          updated_at = NOW()
+       WHERE id = $10
+       RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
+      [
+        data.full_name ?? null,
+        data.phone_number ?? null,
+        data.university_name ?? null,
+        data.student_id ?? null,
+        data.class_name ?? null,
+        data.faculty_name ?? null,
+        data.student_card_url ?? null,
+        data.selfie_with_student_card_url ?? null,
+        data.password_hash ?? null,
+        id,
+      ],
+    );
+    return result.rows[0] ?? null;
+  },
+
   async approve(id: string, adminId: string, ipAddress?: string): Promise<SafeParticipant | null> {
     const client = await pool.connect();
     try {

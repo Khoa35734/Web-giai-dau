@@ -379,9 +379,21 @@ export const updateParticipantProfile = asyncHandler(async (req: AuthenticatedPa
  * [SV-04] NỘP LẠI HỒ SƠ KYC KHI BỊ TỪ CHỐI (RE-SUBMIT)
  */
 export const resubmitParticipant = asyncHandler(async (req: AuthenticatedParticipantRequest, res: Response) => {
-  const participantId = req.participant?.id;
+  let targetId = req.participant?.id;
+  const authHeader = req.headers.authorization;
+  if (!targetId && authHeader?.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, env.jwtSecret) as any;
+      if (decoded?.id) targetId = decoded.id;
+    } catch {
+      // ignore
+    }
+  }
+
   const {
     identifier,
+    id,
     full_name,
     phone_number,
     university_name,
@@ -391,16 +403,19 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     student_card_url,
     selfie_with_student_card_url,
     new_password,
-  } = req.body as ResubmitBody;
+    password,
+  } = req.body as any;
 
-  let targetId = participantId;
-  if (!targetId && identifier) {
-    const found = await participantRepository.findByIdentifier(identifier);
-    if (found) targetId = found.id;
+  if (!targetId) {
+    const lookup = id || identifier || student_id || (req.body as any).email || (req.body as any).username;
+    if (lookup) {
+      const found = await participantRepository.findByIdentifier(String(lookup).trim());
+      if (found) targetId = found.id;
+    }
   }
 
   if (!targetId) {
-    return fail(res, 'Không xác định được tài khoản sinh viên cần nộp lại hồ sơ', 400);
+    return fail(res, 'Không xác định được tài khoản sinh viên cần nộp lại hồ sơ. Vui lòng đăng nhập hoặc cung cấp Mã sinh viên.', 400);
   }
 
   const current = await participantRepository.findById(targetId);
@@ -408,12 +423,13 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     return fail(res, 'Không tìm thấy tài khoản sinh viên', 404);
   }
 
+  const pass = new_password || password;
   let password_hash: string | undefined;
-  if (new_password && new_password.length >= 6) {
-    password_hash = await bcryptjs.hash(new_password, 10);
+  if (pass && pass.length >= 6) {
+    password_hash = await bcryptjs.hash(pass, 10);
   }
 
-  const updated = await participantRepository.update(targetId, {
+  const updated = await participantRepository.resubmit(targetId, {
     full_name: full_name?.trim() || current.full_name,
     phone_number: phone_number !== undefined ? (phone_number?.trim() || null) : current.phone_number,
     university_name: university_name !== undefined ? (university_name?.trim() || null) : current.university_name,
@@ -423,11 +439,23 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     student_card_url: student_card_url !== undefined ? student_card_url : current.student_card_url,
     selfie_with_student_card_url:
       selfie_with_student_card_url !== undefined ? selfie_with_student_card_url : current.selfie_with_student_card_url,
-    status: 'pending', // Chuyển lại về pending chờ duyệt
     password_hash,
   });
 
-  return ok(res, updated, 'Hồ sơ đã được nộp lại thành công và chuyển sang trạng thái Chờ duyệt');
+  if (!updated) {
+    return fail(res, 'Cập nhật nộp lại hồ sơ thất bại', 500);
+  }
+
+  const token = signParticipantToken(updated);
+
+  return res.json({
+    success: true,
+    message: 'Hồ sơ đã được nộp lại thành công và chuyển sang trạng thái Chờ duyệt',
+    token,
+    redirectTo: 'pending-approval',
+    participant: updated,
+    data: updated,
+  });
 });
 
 // Legacy aliases for backward compatibility
