@@ -304,7 +304,7 @@ export const studentLogin = asyncHandler(async (req, res: Response) => {
   const token = signParticipantToken(safeParticipant);
 
   // Xác định trang điều hướng theo trạng thái KYC
-  let redirectTo = 'profile';
+  let redirectTo = '/';
   let message = 'Đăng nhập thành công';
 
   if (safeParticipant.status === 'pending') {
