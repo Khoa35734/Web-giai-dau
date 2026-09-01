@@ -15,16 +15,29 @@ CREATE TABLE public.users (
 
 CREATE TABLE public.participants (
   id character varying NOT NULL,
-  account_type character varying NOT NULL,
+  account_type character varying NOT NULL DEFAULT 'external',
   username character varying NOT NULL UNIQUE,
   password_hash character varying NOT NULL,
   full_name character varying NOT NULL,
-  class_name character varying,
+  student_id character varying UNIQUE,
+  email character varying UNIQUE,
+  phone_number character varying,
+  university_name character varying,
   faculty_name character varying,
+  class_name character varying,
+  student_card_url text,
+  selfie_with_student_card_url text,
+  status character varying NOT NULL DEFAULT 'pending',
+  is_active boolean NOT NULL DEFAULT true,
+  approved_by character varying,
+  approved_at timestamp with time zone,
+  rejection_reason text,
+  rejected_at timestamp with time zone,
   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT participants_pkey PRIMARY KEY (id)
 );
+
 
 CREATE TABLE public.tournaments (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -79,3 +92,29 @@ CREATE TABLE public.registration_members (
   CONSTRAINT fk_rm_registration FOREIGN KEY (registration_id) REFERENCES public.registrations(id),
   CONSTRAINT fk_rm_participant FOREIGN KEY (participant_id) REFERENCES public.participants(id)
 );
+
+CREATE TABLE public.notifications (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  recipient_type character varying NOT NULL,
+  recipient_id text NOT NULL,
+  title text NOT NULL,
+  message text NOT NULL,
+  type character varying NOT NULL,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  is_read boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.audit_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  actor_id text NOT NULL,
+  actor_role character varying NOT NULL,
+  action character varying NOT NULL,
+  target_table character varying NOT NULL,
+  target_id text,
+  payload jsonb DEFAULT '{}'::jsonb,
+  ip_address character varying,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT audit_logs_pkey PRIMARY KEY (id)
+);

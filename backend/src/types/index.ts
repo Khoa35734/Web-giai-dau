@@ -5,7 +5,10 @@
 
 export type UserRole = 'admin' | 'ctv';
 
-export type ParticipantAccountType = 'internal' | 'external' | 'dut' | 'free';
+/** Canonical account types quy định trong SRS v1.3 và database_schema.sql */
+export type CanonicalAccountType = 'internal' | 'external';
+/** ParticipantAccountType bao gồm cả alias legacy 'dut', 'free' cho backward compatibility */
+export type ParticipantAccountType = CanonicalAccountType | 'dut' | 'free';
 
 export type ParticipantStatus = 'pending' | 'approved' | 'rejected';
 
@@ -54,6 +57,7 @@ export interface Participant {
   student_card_url?: string | null;
   selfie_with_student_card_url?: string | null;
   status: ParticipantStatus;
+  is_active?: boolean;
   approved_by?: string | null;
   approved_at?: string | null;
   rejection_reason?: string | null;
@@ -76,6 +80,7 @@ export interface SafeParticipant {
   student_card_url?: string | null;
   selfie_with_student_card_url?: string | null;
   status: ParticipantStatus;
+  is_active?: boolean;
   approved_by?: string | null;
   approved_at?: string | null;
   rejection_reason?: string | null;

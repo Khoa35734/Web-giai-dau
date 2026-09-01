@@ -14,4 +14,8 @@ router.post('/document', verifyAnyToken, documentUpload.single('file'), uploadCo
 /** Upload hình ảnh thông dụng — cần đăng nhập [SRS 5.1] */
 router.post('/image', verifyAnyToken, imageUpload.single('file'), uploadController.uploadImage);
 
+/** [SRS 5.1, 5.2] Phục vụ tài liệu KYC an toàn — chỉ chấp nhận token hợp lệ */
+router.get('/documents/:filename', verifyAnyToken, uploadController.serveDocument);
+
 export default router;
+

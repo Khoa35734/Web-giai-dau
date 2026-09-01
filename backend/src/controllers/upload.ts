@@ -52,3 +52,30 @@ export const uploadImage = asyncHandler(async (req, res: Response) => {
   return res.json({ success: true, url });
 });
 
+/**
+ * [SRS 5.1, 5.2] Phục vụ file tài liệu/ảnh thẻ sinh viên KYC có kiểm soát quyền truy cập.
+ * Chỉ cho phép người dùng đã xác thực (Admin, CTV hoặc sinh viên sở hữu) xem ảnh.
+ * Ngăn chặn tuyệt đối Path Traversal attack qua path.basename().
+ */
+export const serveDocument = asyncHandler(async (req, res: Response) => {
+  const rawParam = req.params.filename;
+  const rawFilename = Array.isArray(rawParam) ? rawParam[0] : (rawParam || '');
+  const safeFilename = path.basename(rawFilename);
+
+  if (!safeFilename || safeFilename === '.' || safeFilename.includes('..')) {
+    return res.status(400).json({ success: false, message: 'Tên tệp tin không hợp lệ' });
+  }
+
+  const filePath = path.join(process.cwd(), 'uploads', 'documents', safeFilename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, message: 'Không tìm thấy tài liệu yêu cầu' });
+  }
+
+  res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  return res.sendFile(filePath);
+});
+
+

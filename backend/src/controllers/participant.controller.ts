@@ -2,7 +2,8 @@ import type { Response } from 'express';
 import bcryptjs from 'bcryptjs';
 import type { AuthenticatedRequest } from '../middleware/auth.ts';
 import { participantRepository } from '../repositories/participant.ts';
-import type { ParticipantAccountType, ParticipantStatus } from '../types/index.ts';
+import type { ParticipantAccountType, ParticipantStatus, SafeParticipant } from '../types/index.ts';
+import { normalizeParticipantIdentity, normalizeParticipantAccountType } from '../utils/dutIdentity.ts';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 import { paramId } from '../utils/param.ts';
 import { created, fail, ok } from '../utils/response.ts';
@@ -98,13 +99,8 @@ export const updateParticipantStatus = asyncHandler(async (req: AuthenticatedReq
     rejection_reason?: string;
   };
 
-  let targetStatus: ParticipantStatus;
-  if (status) {
-    targetStatus = status;
-  } else if (is_active !== undefined) {
-    targetStatus = is_active ? 'approved' : 'rejected';
-  } else {
-    return fail(res, 'Trạng thái (status) là bắt buộc', 400);
+  if (status === undefined && is_active === undefined) {
+    return fail(res, 'Vui lòng cung cấp trạng thái KYC (status) hoặc trạng thái kích hoạt (is_active)', 400);
   }
 
   const current = await participantRepository.findById(id);
@@ -112,8 +108,25 @@ export const updateParticipantStatus = asyncHandler(async (req: AuthenticatedReq
     return fail(res, 'Không tìm thấy hồ sơ sinh viên', 404);
   }
 
-  const updated = await participantRepository.updateStatus(id, adminId, targetStatus, rejection_reason, ipAddress);
-  return ok(res, updated, `Đã cập nhật trạng thái tài khoản sinh viên thành: ${targetStatus}`);
+  let updated: SafeParticipant | null = current;
+
+  // 1. [SRS 3.2 AD-02] Cập nhật trạng thái duyệt KYC (pending, approved, rejected)
+  if (status !== undefined) {
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return fail(res, 'Trạng thái KYC không hợp lệ (chỉ chấp nhận pending, approved, rejected)', 400);
+    }
+    if (status === 'rejected' && (!rejection_reason || !rejection_reason.trim())) {
+      return fail(res, 'Vui lòng cung cấp lý do từ chối cụ thể', 400);
+    }
+    updated = await participantRepository.updateStatus(id, adminId, status, rejection_reason?.trim(), ipAddress);
+  }
+
+  // 2. [SRS 3.2 AD-02] Khóa hoặc mở khóa tài khoản (is_active: true/false) độc lập với KYC
+  if (is_active !== undefined) {
+    updated = await participantRepository.updateActiveStatus(id, adminId, Boolean(is_active), ipAddress);
+  }
+
+  return ok(res, updated, 'Cập nhật trạng thái tài khoản sinh viên thành công');
 });
 
 /** [AD-02 Bridge] Endpoint tổng hợp review cho legacy/frontend calls. */
@@ -176,11 +189,16 @@ export const createParticipant = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Họ và tên là bắt buộc', 400);
   }
 
-  const cleanUsername = (username || student_id || email || '').trim();
-  // [SRS 3.1] Canonical lowercase cho free/external accounts
-  const isExternalType = !['internal', 'dut', 'dut_student'].includes(account_type);
-  const normalizedUsername = isExternalType ? cleanUsername.toLowerCase() : cleanUsername;
-  if (await participantRepository.usernameExists(normalizedUsername)) {
+  const rawUsername = (username || student_id || email || '').trim();
+  // [SRS 3.1] Chuẩn hóa định danh
+  const identity = normalizeParticipantIdentity({
+    account_type,
+    student_id,
+    username: rawUsername,
+    email,
+  });
+
+  if (await participantRepository.usernameExists(identity.username)) {
     return fail(res, 'Tên đăng nhập / MSSV đã tồn tại trong hệ thống', 400);
   }
 
@@ -188,14 +206,18 @@ export const createParticipant = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Email này đã được sử dụng', 400);
   }
 
+  if (identity.student_id && (await participantRepository.studentIdExists(identity.student_id))) {
+    return fail(res, 'Mã số sinh viên này đã được sử dụng', 400);
+  }
+
   const password_hash = await bcryptjs.hash(password || '123456', 10);
   const participant = await participantRepository.create({
-    id: student_id ? student_id.trim() : undefined,
-    account_type,
-    username: normalizedUsername,
+    id: identity.id,
+    account_type: identity.account_type,
+    username: identity.username,
     password_hash,
     full_name: full_name.trim(),
-    student_id: student_id ? student_id.trim() : cleanUsername,
+    student_id: identity.student_id,
     email: email ? email.trim() : null,
     phone_number: phone_number ? phone_number.trim() : null,
     university_name: university_name ? university_name.trim() : 'Trường Đại học Bách khoa - ĐHĐN (DUT)',
@@ -233,10 +255,10 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Không tìm thấy hồ sơ sinh viên', 404);
   }
 
+  const effectiveType = account_type ? normalizeParticipantAccountType(account_type) : participant.account_type;
+  const isExternalUpdate = effectiveType === 'external';
+
   if (username && username.trim() !== participant.username) {
-    // [SRS 3.1] Lowercase cho free/external accounts
-    const effectiveType = account_type ?? participant.account_type;
-    const isExternalUpdate = !['internal', 'dut', 'dut_student'].includes(effectiveType);
     const normalizedUsername = isExternalUpdate ? username.trim().toLowerCase() : username.trim();
     if (await participantRepository.usernameExists(normalizedUsername, id)) {
       return fail(res, 'Tên đăng nhập đã được sử dụng', 400);
@@ -257,18 +279,19 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
     password_hash = await bcryptjs.hash(password, 10);
   }
 
-  // [SRS 3.1] Lowercase username cho free/external
-  const effectiveType = account_type ?? participant.account_type;
-  const isExternalFinal = !['internal', 'dut', 'dut_student'].includes(effectiveType);
   const finalUsername = username
-    ? (isExternalFinal ? username.trim().toLowerCase() : username.trim())
+    ? (isExternalUpdate ? username.trim().toLowerCase() : username.trim())
     : participant.username;
 
+  const finalStudentId = isExternalUpdate
+    ? null
+    : (student_id !== undefined ? (student_id ? student_id.trim() : null) : participant.student_id);
+
   const updated = await participantRepository.update(id, {
-    account_type: account_type ?? participant.account_type,
+    account_type: effectiveType,
     username: finalUsername,
     full_name: full_name ? full_name.trim() : participant.full_name,
-    student_id: student_id ? student_id.trim() : participant.student_id,
+    student_id: finalStudentId,
     email: email ? email.trim() : participant.email,
     phone_number: phone_number !== undefined ? (phone_number?.trim() || null) : participant.phone_number,
     university_name: university_name !== undefined ? (university_name?.trim() || null) : participant.university_name,

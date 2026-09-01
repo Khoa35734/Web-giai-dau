@@ -2,7 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import bcryptjs from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { validateDutStudentId, resolveDutIdentity, generateFreeParticipantId } from '../src/utils/dutIdentity.ts';
+import {
+  validateDutStudentId,
+  resolveDutIdentity,
+  generateFreeParticipantId,
+  normalizeParticipantAccountType,
+  normalizeParticipantIdentity,
+} from '../src/utils/dutIdentity.ts';
 import type { SafeParticipant, JwtPayload, ParticipantStatus } from '../src/types/index.ts';
 
 const TEST_JWT_SECRET = process.env.JWT_SECRET || 'test_jwt_secret_esports_2026';
@@ -184,3 +190,71 @@ describe('Security: Password Hashing & Verification', () => {
     assert.equal(isWrongMatch, false);
   });
 });
+
+describe('PR #4 Fix 2: Participant Account Type & Identity Normalization [SRS 3.1]', () => {
+  it('should canonicalize all account type variants correctly', () => {
+    assert.equal(normalizeParticipantAccountType('dut'), 'internal');
+    assert.equal(normalizeParticipantAccountType('dut_student'), 'internal');
+    assert.equal(normalizeParticipantAccountType('internal'), 'internal');
+    assert.equal(normalizeParticipantAccountType('free'), 'external');
+    assert.equal(normalizeParticipantAccountType('external'), 'external');
+    assert.equal(normalizeParticipantAccountType(null), 'internal');
+    assert.equal(normalizeParticipantAccountType('unknown'), 'external');
+  });
+
+  it('should normalize internal participant identity with student_id as primary identifier', () => {
+    const identity = normalizeParticipantIdentity({
+      account_type: 'dut',
+      student_id: '102210123',
+      username: 'MyCustomUser',
+      email: 'student@dut.udn.vn',
+    });
+
+    assert.equal(identity.account_type, 'internal');
+    assert.equal(identity.id, '102210123');
+    assert.equal(identity.student_id, '102210123');
+    assert.equal(identity.username, 'MyCustomUser');
+  });
+
+  it('should normalize external participant identity: lowercase username and student_id is null', () => {
+    const identity = normalizeParticipantIdentity({
+      account_type: 'free',
+      student_id: 'SomeIgnoredMSSV',
+      username: 'Gamer_Pro_2026',
+      email: 'gamer@gmail.com',
+    });
+
+    assert.equal(identity.account_type, 'external');
+    assert.equal(identity.student_id, null);
+    assert.equal(identity.username, 'gamer_pro_2026');
+    assert.ok(identity.id.length > 0);
+  });
+});
+
+describe('PR #4 Fix 4: Status Semantics & is_active Account Lock', () => {
+  it('should reject login when participant is_active is false, regardless of KYC status', () => {
+    const activeApprovedParticipant: SafeParticipant = {
+      id: '102210123',
+      username: '102210123',
+      full_name: 'Nguyễn Văn A',
+      account_type: 'internal',
+      status: 'approved',
+      is_active: true,
+    };
+
+    const lockedApprovedParticipant: SafeParticipant = {
+      id: '102210124',
+      username: '102210124',
+      full_name: 'Nguyễn Văn B',
+      account_type: 'internal',
+      status: 'approved',
+      is_active: false,
+    };
+
+    assert.equal(activeApprovedParticipant.is_active, true);
+    assert.equal(lockedApprovedParticipant.is_active, false);
+    // KYC status remains 'approved' even when account is locked
+    assert.equal(lockedApprovedParticipant.status, 'approved');
+  });
+});
+

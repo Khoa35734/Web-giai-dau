@@ -5,7 +5,13 @@ import { env } from '../config/env.ts';
 import type { AuthenticatedParticipantRequest, AuthenticatedRequest } from '../middleware/auth.ts';
 import { participantRepository } from '../repositories/participant.ts';
 import { userRepository } from '../repositories/user.ts';
-import { resolveDutIdentity, validateDutStudentId, generateFreeParticipantId } from '../utils/dutIdentity.ts';
+import {
+  resolveDutIdentity,
+  validateDutStudentId,
+  generateFreeParticipantId,
+  normalizeParticipantIdentity,
+  normalizeParticipantAccountType,
+} from '../utils/dutIdentity.ts';
 import type { ParticipantAccountType, SafeParticipant, SafeUser, UserRole } from '../types/index.ts';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 import { created, fail, ok } from '../utils/response.ts';
@@ -215,17 +221,23 @@ export const studentRegister = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Mã số sinh viên hoặc Email là bắt buộc', 400);
   }
 
-  let finalId = rawId;
+  // [SRS 3.1] Chuẩn hóa toàn diện định danh (id, student_id, username, account_type)
+  const identity = normalizeParticipantIdentity({
+    account_type,
+    student_id,
+    username: rawId,
+    email,
+  });
+
   let finalFaculty = faculty_name?.trim() || null;
   let finalClass = class_name?.trim() || null;
   let finalUniversity = university_name?.trim() || 'Trường Đại học Bách khoa - ĐHĐN (DUT)';
-  const isInternal = ['internal', 'dut', 'dut_student'].includes(account_type);
 
-  if (isInternal && student_id) {
-    const validation = validateDutStudentId(student_id.trim());
+  if (identity.account_type === 'internal' && identity.student_id) {
+    const validation = validateDutStudentId(identity.student_id);
     if (validation.isValid) {
       finalFaculty = validation.faculty_name || finalFaculty;
-      if (!finalClass) finalClass = `DUT-${student_id.trim().slice(0, 3)}`;
+      if (!finalClass) finalClass = `DUT-${identity.student_id.slice(0, 3)}`;
     }
   }
 
@@ -234,22 +246,22 @@ export const studentRegister = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Email này đã được đăng ký tài khoản', 409);
   }
 
-  if (student_id && (await participantRepository.studentIdExists(student_id.trim()))) {
+  if (identity.student_id && (await participantRepository.studentIdExists(identity.student_id))) {
     return fail(res, 'Mã số sinh viên này đã được đăng ký', 409);
   }
 
-  if (await participantRepository.usernameExists(rawId)) {
+  if (await participantRepository.usernameExists(identity.username)) {
     return fail(res, 'Tên đăng nhập / MSSV này đã tồn tại', 409);
   }
 
   const password_hash = await bcryptjs.hash(password, 10);
   const participant = await participantRepository.create({
-    id: student_id ? student_id.trim() : generateFreeParticipantId(),
-    account_type: isInternal ? 'internal' : 'external',
-    username: rawId,
+    id: identity.id,
+    account_type: identity.account_type,
+    username: identity.username,
     password_hash,
     full_name: full_name.trim(),
-    student_id: student_id ? student_id.trim() : null,
+    student_id: identity.student_id,
     email: email ? email.trim() : null,
     phone_number: phone_number ? phone_number.trim() : null,
     university_name: finalUniversity,
@@ -286,8 +298,8 @@ export const studentLogin = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Vui lòng nhập Mã sinh viên / Email và mật khẩu', 400);
   }
 
-  // [SRS 5.1] Chỉ lấy id + password_hash — giảm thiểu credential exposure
-  const credentials = await participantRepository.findPasswordHashByIdentifier(identifier);
+  // [SRS 3.1 SV-02, 5.1] Exact match tìm kiếm định danh đăng nhập
+  const credentials = await participantRepository.findPasswordHashByLoginIdentifier(identifier);
   if (!credentials) {
     return fail(res, 'Tài khoản hoặc mật khẩu không chính xác', 401);
   }
@@ -301,6 +313,11 @@ export const studentLogin = asyncHandler(async (req, res: Response) => {
   const safeParticipant = await participantRepository.findSafeById(credentials.id);
   if (!safeParticipant) {
     return fail(res, 'Không tìm thấy hồ sơ người dùng', 404);
+  }
+
+  // [SRS 3.2 AD-02] Kiểm tra trạng thái kích hoạt tài khoản
+  if (safeParticipant.is_active === false) {
+    return fail(res, 'Tài khoản của bạn đã bị vô hiệu hóa hoặc khóa tạm thời. Vui lòng liên hệ Ban tổ chức.', 403);
   }
 
   const token = signParticipantToken(safeParticipant);
@@ -379,6 +396,8 @@ export const updateParticipantProfile = asyncHandler(async (req: AuthenticatedPa
 
 /**
  * [SV-04] NỘP LẠI HỒ SƠ KYC KHI BỊ TỪ CHỐI (RE-SUBMIT)
+ * - Nguồn xác thực ưu tiên 1: req.participant (từ JWT Token). Cố định ID từ token, tuyệt đối không nhận ID qua body.
+ * - Trường hợp fallback (không gửi token): Phải tìm kiếm qua exact identifier VÀ bắt buộc xác thực mật khẩu bcrypt.
  */
 export const resubmitParticipant = asyncHandler(async (req: AuthenticatedParticipantRequest, res: Response) => {
   let targetId = req.participant?.id;
@@ -387,7 +406,9 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     try {
       const token = authHeader.split(' ')[1];
       const decoded = jwt.verify(token, env.jwtSecret) as any;
-      if (decoded?.id) targetId = decoded.id;
+      if (decoded?.id && decoded?.kind === 'participant') {
+        targetId = decoded.id;
+      }
     } catch {
       // ignore
     }
@@ -406,18 +427,35 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     selfie_with_student_card_url,
     new_password,
     password,
+    current_password,
   } = req.body as any;
 
+  // [SV-04] RÀNG BUỘC ĐỊNH DANH NGHIÊM NGẶT:
+  // 1. NẾU ĐÃ CÓ TOKEN: targetId cố định từ token, KHÔNG nhận bất kỳ ID nào từ req.body
+  //    (Ngăn chặn hoàn toàn việc người dùng A nộp đè hồ sơ người dùng B).
+  // 2. NẾU KHÔNG CÓ TOKEN (Fallback): BẮT BUỘC phải xác thực mật khẩu hiện tại bằng bcrypt.
   if (!targetId) {
-    const lookup = id || identifier || student_id || (req.body as any).email || (req.body as any).username;
-    if (lookup) {
-      const found = await participantRepository.findByIdentifier(String(lookup).trim());
-      if (found) targetId = found.id;
+    const lookup = (id || identifier || student_id || (req.body as any).email || (req.body as any).username || '').toString().trim();
+    if (!lookup) {
+      return fail(res, 'Không xác định được tài khoản sinh viên cần nộp lại hồ sơ. Vui lòng đăng nhập hoặc cung cấp Mã sinh viên / Email.', 400);
     }
-  }
 
-  if (!targetId) {
-    return fail(res, 'Không xác định được tài khoản sinh viên cần nộp lại hồ sơ. Vui lòng đăng nhập hoặc cung cấp Mã sinh viên.', 400);
+    const currentCreds = await participantRepository.findPasswordHashByLoginIdentifier(lookup);
+    if (!currentCreds) {
+      return fail(res, 'Không tìm thấy tài khoản sinh viên', 404);
+    }
+
+    const checkPass = current_password || password;
+    if (!checkPass) {
+      return fail(res, 'Vui lòng cung cấp mật khẩu tài khoản để xác thực quyền nộp lại hồ sơ', 401);
+    }
+
+    const isMatch = await bcryptjs.compare(checkPass, currentCreds.password_hash);
+    if (!isMatch) {
+      return fail(res, 'Mật khẩu xác thực tài khoản không chính xác', 401);
+    }
+
+    targetId = currentCreds.id;
   }
 
   const current = await participantRepository.findById(targetId);
@@ -434,7 +472,7 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     );
   }
 
-  const pass = new_password || password;
+  const pass = new_password || (req.participant ? password : undefined);
   let password_hash: string | undefined;
   if (pass && pass.length >= 6) {
     password_hash = await bcryptjs.hash(pass, 10);

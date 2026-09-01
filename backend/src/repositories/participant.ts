@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import pool from '../config/db.ts';
 import type { ParticipantAccountType, Participant, SafeParticipant, PaginationResult, ParticipantStatus } from '../types/index.ts';
+import { normalizeParticipantIdentity, normalizeParticipantAccountType } from '../utils/dutIdentity.ts';
 
 const PARTICIPANT_SAFE_COLUMNS = `
   id, username, full_name, student_id, email, phone_number,
   university_name, faculty_name, class_name, account_type,
   student_card_url, selfie_with_student_card_url,
-  status, approved_by, approved_at, rejection_reason, rejected_at,
+  status, is_active, approved_by, approved_at, rejection_reason, rejected_at,
   created_at, updated_at
 `;
 
@@ -28,11 +29,19 @@ export const participantRepository = {
     return result.rows[0] ?? null;
   },
 
-  async findByIdentifier(identifier: string): Promise<Participant | null> {
+  /**
+   * [SRS 3.1 SV-02] Tìm participant phục vụ ĐĂNG NHẬP bằng exact matching.
+   * Ưu tiên so khớp chính xác: student_id -> email -> username -> id.
+   * Tuyệt đối không dùng ILIKE wildcard để tránh match sai tài khoản.
+   */
+  async findByLoginIdentifier(identifier: string): Promise<Participant | null> {
     const cleanId = identifier.trim();
     const result = await pool.query<Participant>(
       `SELECT * FROM participants
-       WHERE username ILIKE $1 OR email ILIKE $1 OR student_id ILIKE $1 OR id = $1
+       WHERE student_id = $1
+          OR LOWER(email) = LOWER($1)
+          OR LOWER(username) = LOWER($1)
+          OR id = $1
        LIMIT 1`,
       [cleanId],
     );
@@ -40,33 +49,66 @@ export const participantRepository = {
   },
 
   /**
-   * [SRS 5.1] Tìm participant theo identifier — CHỈ trả cột an toàn (không password_hash).
-   * Dùng ở nơi không cần xác thực mật khẩu.
+   * [SRS 5.1] Trả về CHỈ id + password_hash phục vụ so khớp bcrypt cho đăng nhập.
+   * Giảm thiểu credential exposure.
    */
-  async findSafeByIdentifier(identifier: string): Promise<SafeParticipant | null> {
-    const cleanId = identifier.trim();
-    const result = await pool.query<SafeParticipant>(
-      `SELECT ${PARTICIPANT_SAFE_COLUMNS} FROM participants
-       WHERE username ILIKE $1 OR email ILIKE $1 OR student_id ILIKE $1 OR id = $1
-       LIMIT 1`,
-      [cleanId],
-    );
-    return result.rows[0] ?? null;
-  },
-
-  /**
-   * [SRS 5.1] Trả về CHỈ id + password_hash — dùng duy nhất cho bước so khớp bcrypt.
-   * Giảm thiểu phạm vi dữ liệu nhạy cảm trong bộ nhớ.
-   */
-  async findPasswordHashByIdentifier(identifier: string): Promise<{ id: string; password_hash: string } | null> {
+  async findPasswordHashByLoginIdentifier(identifier: string): Promise<{ id: string; password_hash: string } | null> {
     const cleanId = identifier.trim();
     const result = await pool.query<{ id: string; password_hash: string }>(
       `SELECT id, password_hash FROM participants
-       WHERE username ILIKE $1 OR email ILIKE $1 OR student_id ILIKE $1 OR id = $1
+       WHERE student_id = $1
+          OR LOWER(email) = LOWER($1)
+          OR LOWER(username) = LOWER($1)
+          OR id = $1
        LIMIT 1`,
       [cleanId],
     );
     return result.rows[0] ?? null;
+  },
+
+  /**
+   * [SRS 5.1] Tìm participant an toàn bằng exact matching (không lấy password_hash).
+   */
+  async findSafeByLoginIdentifier(identifier: string): Promise<SafeParticipant | null> {
+    const cleanId = identifier.trim();
+    const result = await pool.query<SafeParticipant>(
+      `SELECT ${PARTICIPANT_SAFE_COLUMNS} FROM participants
+       WHERE student_id = $1
+          OR LOWER(email) = LOWER($1)
+          OR LOWER(username) = LOWER($1)
+          OR id = $1
+       LIMIT 1`,
+      [cleanId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  /**
+   * [SRS 3.2 AD-01] Tìm kiếm mờ (search term) dành riêng cho quản trị viên tra cứu.
+   */
+  async findBySearchTerm(term: string): Promise<SafeParticipant[]> {
+    const cleanTerm = `%${term.trim()}%`;
+    const result = await pool.query<SafeParticipant>(
+      `SELECT ${PARTICIPANT_SAFE_COLUMNS} FROM participants
+       WHERE username ILIKE $1 OR full_name ILIKE $1 OR student_id ILIKE $1 OR email ILIKE $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [cleanTerm],
+    );
+    return result.rows;
+  },
+
+  // Aliases for backward compatibility
+  async findByIdentifier(identifier: string): Promise<Participant | null> {
+    return this.findByLoginIdentifier(identifier);
+  },
+
+  async findSafeByIdentifier(identifier: string): Promise<SafeParticipant | null> {
+    return this.findSafeByLoginIdentifier(identifier);
+  },
+
+  async findPasswordHashByIdentifier(identifier: string): Promise<{ id: string; password_hash: string } | null> {
+    return this.findPasswordHashByLoginIdentifier(identifier);
   },
 
   async findSafeById(id: string): Promise<SafeParticipant | null> {
@@ -79,22 +121,22 @@ export const participantRepository = {
 
   async usernameExists(username: string, excludeId?: string): Promise<boolean> {
     const result = excludeId
-      ? await pool.query('SELECT id FROM participants WHERE username ILIKE $1 AND id != $2', [username, excludeId])
-      : await pool.query('SELECT id FROM participants WHERE username ILIKE $1', [username]);
+      ? await pool.query('SELECT id FROM participants WHERE LOWER(username) = LOWER($1) AND id != $2', [username.trim(), excludeId])
+      : await pool.query('SELECT id FROM participants WHERE LOWER(username) = LOWER($1)', [username.trim()]);
     return result.rows.length > 0;
   },
 
   async emailExists(email: string, excludeId?: string): Promise<boolean> {
     const result = excludeId
-      ? await pool.query('SELECT id FROM participants WHERE email ILIKE $1 AND id != $2', [email, excludeId])
-      : await pool.query('SELECT id FROM participants WHERE email ILIKE $1', [email]);
+      ? await pool.query('SELECT id FROM participants WHERE LOWER(email) = LOWER($1) AND id != $2', [email.trim(), excludeId])
+      : await pool.query('SELECT id FROM participants WHERE LOWER(email) = LOWER($1)', [email.trim()]);
     return result.rows.length > 0;
   },
 
   async studentIdExists(studentId: string, excludeId?: string): Promise<boolean> {
     const result = excludeId
-      ? await pool.query('SELECT id FROM participants WHERE student_id ILIKE $1 AND id != $2', [studentId, excludeId])
-      : await pool.query('SELECT id FROM participants WHERE student_id ILIKE $1', [studentId]);
+      ? await pool.query('SELECT id FROM participants WHERE student_id = $1 AND id != $2', [studentId.trim(), excludeId])
+      : await pool.query('SELECT id FROM participants WHERE student_id = $1', [studentId.trim()]);
     return result.rows.length > 0;
   },
 
@@ -113,37 +155,42 @@ export const participantRepository = {
     student_card_url?: string | null;
     selfie_with_student_card_url?: string | null;
     status?: ParticipantStatus;
+    is_active?: boolean;
   }): Promise<SafeParticipant> {
-    const participantId = data.id ?? (data.student_id || randomUUID());
+    // [SRS 3.1] Chuẩn hóa định danh tài khoản qua helper
+    const identity = normalizeParticipantIdentity({
+      id: data.id,
+      account_type: data.account_type,
+      student_id: data.student_id,
+      username: data.username,
+      email: data.email,
+    });
     const finalStatus = data.status || 'pending';
-    const finalAccountType = ['dut', 'internal', 'dut_student'].includes(data.account_type) ? 'internal' : 'external';
-
-    // [SRS 3.1 SV-01] Enforce canonical lowercase cho username free/external accounts
-    const rawUsername = data.username || data.student_id || data.email || participantId;
-    const finalUsername = finalAccountType === 'external' ? rawUsername.toLowerCase() : rawUsername;
+    const isActive = data.is_active !== undefined ? data.is_active : true;
 
     const result = await pool.query<SafeParticipant>(
       `INSERT INTO participants (
          id, username, password_hash, full_name, student_id, email, phone_number,
          university_name, faculty_name, class_name, account_type,
-         student_card_url, selfie_with_student_card_url, status
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         student_card_url, selfie_with_student_card_url, status, is_active
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
       [
-        participantId,
-        finalUsername,
+        identity.id,
+        identity.username,
         data.password_hash,
-        data.full_name,
-        data.student_id ?? null,
-        data.email ?? null,
-        data.phone_number ?? null,
-        data.university_name ?? 'Trường Đại học Bách khoa - ĐHĐN (DUT)',
-        data.faculty_name ?? null,
-        data.class_name ?? null,
-        finalAccountType,
+        data.full_name.trim(),
+        identity.student_id,
+        data.email ? data.email.trim() : null,
+        data.phone_number ? data.phone_number.trim() : null,
+        data.university_name ? data.university_name.trim() : 'Trường Đại học Bách khoa - ĐHĐN (DUT)',
+        data.faculty_name ? data.faculty_name.trim() : null,
+        data.class_name ? data.class_name.trim() : null,
+        identity.account_type,
         data.student_card_url ?? null,
         data.selfie_with_student_card_url ?? null,
         finalStatus,
+        isActive,
       ],
     );
     return result.rows[0];
@@ -225,6 +272,7 @@ export const participantRepository = {
       student_card_url?: string | null;
       selfie_with_student_card_url?: string | null;
       status?: ParticipantStatus;
+      is_active?: boolean;
     },
   ): Promise<SafeParticipant | null> {
     // Build dynamic SET clause — only include fields explicitly passed (not undefined)
@@ -254,6 +302,7 @@ export const participantRepository = {
     if (data.student_card_url !== undefined) addField('student_card_url', data.student_card_url);
     if (data.selfie_with_student_card_url !== undefined) addField('selfie_with_student_card_url', data.selfie_with_student_card_url);
     if (data.status !== undefined) addField('status', data.status);
+    if (data.is_active !== undefined) addField('is_active', data.is_active);
 
     if (setClauses.length === 0) {
       // Không có field nào thay đổi — trả về dữ liệu hiện tại
@@ -326,6 +375,7 @@ export const participantRepository = {
       const result = await client.query<SafeParticipant>(
         `UPDATE participants SET
             status = 'approved',
+            is_active = true,
             approved_by = $1,
             approved_at = NOW(),
             rejection_reason = NULL,
@@ -342,36 +392,50 @@ export const participantRepository = {
         return null;
       }
 
-      // 1. Tạo Notification cho sinh viên
-      await client.query(
-        `INSERT INTO notifications (
-           recipient_type, recipient_id, title, message, type, metadata
-         ) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          'participant',
-          id,
-          'Hồ sơ KYC đã được phê duyệt',
-          'Chúc mừng! Hồ sơ xác thực sinh viên của bạn đã được Ban tổ chức phê duyệt thành công.',
-          'kyc_status',
-          JSON.stringify({ participant_id: id, status: 'approved' }),
-        ],
-      );
+      // 1. Tạo Notification cho sinh viên (bọc SAVEPOINT để không làm hỏng commit chính nếu bảng chưa sẵn sàng)
+      await client.query('SAVEPOINT notif_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO notifications (
+             recipient_type, recipient_id, title, message, type, metadata
+           ) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            'participant',
+            id,
+            'Hồ sơ KYC đã được phê duyệt',
+            'Chúc mừng! Hồ sơ xác thực sinh viên của bạn đã được Ban tổ chức phê duyệt thành công.',
+            'kyc_status',
+            JSON.stringify({ participant_id: id, status: 'approved' }),
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT notif_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT notif_savepoint');
+        console.warn('[Notification] Non-fatal notification write error:', err);
+      }
 
-      // 2. Ghi Audit Log
-      await client.query(
-        `INSERT INTO audit_logs (
-           actor_id, actor_role, action, target_table, target_id, payload, ip_address
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          adminId,
-          'admin',
-          'APPROVE_STUDENT',
-          'participants',
-          id,
-          JSON.stringify({ status: 'approved', approved_by: adminId }),
-          ipAddress ?? null,
-        ],
-      );
+      // 2. Ghi Audit Log (bọc SAVEPOINT)
+      await client.query('SAVEPOINT audit_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO audit_logs (
+             actor_id, actor_role, action, target_table, target_id, payload, ip_address
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            adminId,
+            'admin',
+            'APPROVE_STUDENT',
+            'participants',
+            id,
+            JSON.stringify({ status: 'approved', approved_by: adminId }),
+            ipAddress ?? null,
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT audit_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT audit_savepoint');
+        console.warn('[AuditLog] Non-fatal audit log write error:', err);
+      }
 
       await client.query('COMMIT');
       return participant;
@@ -405,36 +469,50 @@ export const participantRepository = {
         return null;
       }
 
-      // 1. Tạo Notification cho sinh viên
-      await client.query(
-        `INSERT INTO notifications (
-           recipient_type, recipient_id, title, message, type, metadata
-         ) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          'participant',
-          id,
-          'Hồ sơ KYC bị từ chối',
-          `Hồ sơ xác thực sinh viên của bạn chưa được duyệt. Lý do: ${rejectionReason}`,
-          'kyc_status',
-          JSON.stringify({ participant_id: id, status: 'rejected', rejection_reason: rejectionReason }),
-        ],
-      );
+      // 1. Tạo Notification cho sinh viên (bọc SAVEPOINT)
+      await client.query('SAVEPOINT notif_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO notifications (
+             recipient_type, recipient_id, title, message, type, metadata
+           ) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            'participant',
+            id,
+            'Hồ sơ KYC bị từ chối',
+            `Hồ sơ xác thực sinh viên của bạn chưa được duyệt. Lý do: ${rejectionReason}`,
+            'kyc_status',
+            JSON.stringify({ participant_id: id, status: 'rejected', rejection_reason: rejectionReason }),
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT notif_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT notif_savepoint');
+        console.warn('[Notification] Non-fatal notification write error:', err);
+      }
 
-      // 2. Ghi Audit Log
-      await client.query(
-        `INSERT INTO audit_logs (
-           actor_id, actor_role, action, target_table, target_id, payload, ip_address
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          adminId,
-          'admin',
-          'REJECT_STUDENT',
-          'participants',
-          id,
-          JSON.stringify({ status: 'rejected', rejection_reason: rejectionReason }),
-          ipAddress ?? null,
-        ],
-      );
+      // 2. Ghi Audit Log (bọc SAVEPOINT)
+      await client.query('SAVEPOINT audit_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO audit_logs (
+             actor_id, actor_role, action, target_table, target_id, payload, ip_address
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            adminId,
+            'admin',
+            'REJECT_STUDENT',
+            'participants',
+            id,
+            JSON.stringify({ status: 'rejected', rejection_reason: rejectionReason }),
+            ipAddress ?? null,
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT audit_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT audit_savepoint');
+        console.warn('[AuditLog] Non-fatal audit log write error:', err);
+      }
 
       await client.query('COMMIT');
       return participant;
@@ -446,6 +524,9 @@ export const participantRepository = {
     }
   },
 
+  /**
+   * [SRS 3.2 AD-02] Cập nhật trạng thái KYC (pending, approved, rejected) - Độc lập với is_active.
+   */
   async updateStatus(
     id: string,
     adminId: string,
@@ -473,20 +554,88 @@ export const participantRepository = {
         return null;
       }
 
-      await client.query(
-        `INSERT INTO audit_logs (
-           actor_id, actor_role, action, target_table, target_id, payload, ip_address
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          adminId,
-          'admin',
-          'UPDATE_STUDENT_STATUS',
-          'participants',
-          id,
-          JSON.stringify({ status, reason }),
-          ipAddress ?? null,
-        ],
+      await client.query('SAVEPOINT audit_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO audit_logs (
+             actor_id, actor_role, action, target_table, target_id, payload, ip_address
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            adminId,
+            'admin',
+            'UPDATE_STUDENT_STATUS',
+            'participants',
+            id,
+            JSON.stringify({ status, reason }),
+            ipAddress ?? null,
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT audit_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT audit_savepoint');
+        console.warn('[AuditLog] Non-fatal audit log write error:', err);
+      }
+
+      await client.query('COMMIT');
+      return participant;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * [SRS 3.2 AD-02] Khóa / Mở khóa tài khoản sinh viên (is_active: true/false).
+   * Tách bạch hoàn toàn khỏi trạng thái duyệt KYC (status).
+   */
+  async updateActiveStatus(
+    id: string,
+    adminId: string,
+    isActive: boolean,
+    ipAddress?: string,
+  ): Promise<SafeParticipant | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const result = await client.query<SafeParticipant>(
+        `UPDATE participants SET
+            is_active = $1,
+            updated_at = NOW()
+         WHERE id = $2
+         RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
+        [isActive, id],
       );
+
+      const participant = result.rows[0];
+      if (!participant) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      await client.query('SAVEPOINT audit_savepoint');
+      try {
+        await client.query(
+          `INSERT INTO audit_logs (
+             actor_id, actor_role, action, target_table, target_id, payload, ip_address
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            adminId,
+            'admin',
+            isActive ? 'UNLOCK_PARTICIPANT' : 'LOCK_PARTICIPANT',
+            'participants',
+            id,
+            JSON.stringify({ is_active: isActive }),
+            ipAddress ?? null,
+          ],
+        );
+        await client.query('RELEASE SAVEPOINT audit_savepoint');
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT audit_savepoint');
+        console.warn('[AuditLog] Non-fatal audit log write error:', err);
+      }
 
       await client.query('COMMIT');
       return participant;
