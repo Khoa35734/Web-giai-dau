@@ -163,3 +163,110 @@ export interface PaginationResult {
   limit: number;
   pages: number;
 }
+
+// =============================================================================
+// DOMAIN TYPES: CHECK-IN, AI OCR, CERTIFICATES, NOTIFICATIONS, AUDIT LOGS
+// =============================================================================
+
+export type CheckinMethod = 'qr_scan' | 'proof_submission' | 'proof_upload' | 'ai_ocr' | 'manual_admin' | 'manual_override';
+export type CheckinStatus = 'approved' | 'pending_review' | 'rejected';
+
+export interface CheckIn {
+  id: string;
+  tournament_id: string;
+  registration_id: string;
+  participant_id: string;
+  checkin_method: CheckinMethod;
+  status: CheckinStatus;
+  proof_url?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_accuracy?: number | null;
+  ip_address?: string | null;
+  device_info?: string | null;
+  checked_in_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  notes?: string | null;
+}
+
+export type AiCheckinSourceType = 'congdong_lienquan' | 'custom_lobby' | 'other';
+export type AiCheckinStatus = 'processing' | 'pending_review' | 'confirmed' | 'cancelled' | 'rejected';
+
+export interface AiCheckinSession {
+  id: string;
+  tournament_id: string;
+  match_id?: string | null;
+  created_by: string;
+  source_type: AiCheckinSourceType;
+  status: AiCheckinStatus;
+  total_detected: number;
+  total_matched: number;
+  image_purged: boolean;
+  confirmed_by?: string | null;
+  confirmed_at?: string | null;
+  created_at: string;
+}
+
+export interface AiCheckinDetection {
+  id: string;
+  session_id: string;
+  raw_text: string;
+  ocr_confidence?: number | null;
+  bounding_box?: Record<string, unknown>;
+  matched_participant_id?: string | null;
+  matched_registration_id?: string | null;
+  similarity_score?: number | null;
+  is_manually_adjusted: boolean;
+  is_confirmed: boolean;
+  created_at: string;
+}
+
+export type CertificateType = 'participant' | 'organizer';
+
+export interface Certificate {
+  id: string;
+  tournament_id: string;
+  certificate_type: CertificateType;
+  participant_id: string;
+  registration_id?: string | null;
+  organizer_id?: string | null;
+  certificate_code: string;
+  title: string;
+  achievement_title?: string | null;
+  certificate_url: string;
+  qr_verify_url?: string | null;
+  metadata?: Record<string, unknown>;
+  is_revoked: boolean;
+  issued_at: string;
+}
+
+export type NotificationRecipientType = 'user' | 'participant';
+export type NotificationType = 'kyc_status' | 'team_request' | 'match_schedule' | 'checkin_status' | 'certificate_issued' | 'system';
+
+export interface Notification {
+  id: string;
+  recipient_type: NotificationRecipientType;
+  recipient_id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  metadata?: Record<string, unknown>;
+  is_read: boolean;
+  created_at: string;
+}
+
+export type AuditActorRole = 'admin' | 'ctv' | 'participant' | 'system';
+
+export interface AuditLog {
+  id: string;
+  actor_id: string;
+  actor_role: AuditActorRole;
+  action: string;
+  target_table: string;
+  target_id?: string | null;
+  payload?: Record<string, unknown>;
+  ip_address?: string | null;
+  created_at: string;
+}
+
