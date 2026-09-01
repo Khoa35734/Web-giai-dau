@@ -1,9 +1,21 @@
 import { Router } from 'express';
 import * as uploadController from '../controllers/upload.ts';
-import { bannerUpload } from '../middleware/upload.ts';
+import { bannerUpload, documentUpload, imageUpload } from '../middleware/upload.ts';
+import { verifyToken, verifyAnyToken } from '../middleware/auth.ts';
 
 const router = Router();
 
-router.post('/banner', bannerUpload.single('banner'), uploadController.uploadBanner);
+/** Upload banner giải đấu — chỉ admin/CTV [SRS 5.1] */
+router.post('/banner', verifyToken, bannerUpload.single('banner'), uploadController.uploadBanner);
+
+/** Upload tài liệu / Thẻ sinh viên & Selfie KYC [SV-01, SV-04, SRS 5.1] — cần đăng nhập (admin/CTV/participant) */
+router.post('/document', verifyAnyToken, documentUpload.single('file'), uploadController.uploadDocument);
+
+/** Upload hình ảnh thông dụng — cần đăng nhập [SRS 5.1] */
+router.post('/image', verifyAnyToken, imageUpload.single('file'), uploadController.uploadImage);
+
+/** [SRS 5.1, 5.2] Phục vụ tài liệu KYC an toàn — chỉ chấp nhận token hợp lệ */
+router.get('/documents/:filename', verifyAnyToken, uploadController.serveDocument);
 
 export default router;
+

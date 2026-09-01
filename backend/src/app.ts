@@ -9,13 +9,16 @@ import systemRoutes from './routes/system.routes.ts';
 import tournamentRoutes from './routes/tournament.routes.ts';
 import uploadRoutes from './routes/upload.routes.ts';
 
+import { verifyAnyToken } from './middleware/auth.ts';
+import { serveDocument } from './controllers/upload.ts';
+
 export const app = express();
 
 app.use(cors());
 app.use(express.json());
 
 // ===========================
-// STATIC FILES
+// STATIC FILES & PUBLIC ASSETS
 // ===========================
 // Game logos (phải đặt trước các route khác)
 app.use(
@@ -26,11 +29,24 @@ app.use(
   }),
 );
 
-// Banner uploads
+// Banner uploads (Public assets)
 app.use(
   '/api/banners',
   express.static(path.join(process.cwd(), 'uploads', 'banners'), { maxAge: '7d' }),
 );
+
+// General image uploads (Public assets)
+app.use(
+  '/api/images',
+  express.static(path.join(process.cwd(), 'uploads', 'images'), { maxAge: '7d' }),
+);
+
+// ===========================
+// PROTECTED DOCUMENTS [SRS 5.1, 5.2]
+// Tuyệt đối không public static folder documents/ chứa thẻ SV & ảnh selfie KYC
+// ===========================
+app.get('/api/documents/:filename', verifyAnyToken, serveDocument);
+
 
 // ===========================
 // API ROUTES
