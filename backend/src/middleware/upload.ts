@@ -104,23 +104,26 @@ const imageFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   }
 };
 
-/** Middleware upload banner giải đấu — giới hạn 10MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
+/** Giới hạn dung lượng tối đa cho file upload: 5MB */
+export const MAX_UPLOAD_SIZE = 5 * 1024 * 1024;
+
+/** Middleware upload banner giải đấu — giới hạn 5MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
 export const bannerUpload = multer({
   storage: bannerStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: imageFilter,
 });
 
-/** Middleware upload tài liệu/thẻ sinh viên KYC (SV-01, SV-04) — giới hạn 10MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
+/** Middleware upload tài liệu/thẻ sinh viên KYC (SV-01, SV-04) — giới hạn 5MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
 export const documentUpload = multer({
   storage: documentStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: imageFilter,
 });
 
-/** Middleware upload hình ảnh thông dụng — giới hạn 10MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
+/** Middleware upload hình ảnh thông dụng — giới hạn 5MB, kiểm tra chặt chẽ JPG/PNG/WebP. */
 export const imageUpload = multer({
   storage: imageStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: imageFilter,
 });

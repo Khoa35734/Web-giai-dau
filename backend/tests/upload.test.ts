@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateImageFile, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES } from '../src/middleware/upload.ts';
+import {
+  validateImageFile,
+  ALLOWED_EXTENSIONS,
+  ALLOWED_MIME_TYPES,
+  MAX_UPLOAD_SIZE,
+} from '../src/middleware/upload.ts';
 
 describe('Upload Middleware & Security Validation', () => {
   describe('validateImageFile - Extension & MIME Whitelist', () => {
@@ -58,12 +63,16 @@ describe('Upload Middleware & Security Validation', () => {
     });
   });
 
-  describe('Whitelist Constants', () => {
+  describe('Upload Constraints & Security Constants', () => {
     it('should contain strictly expected image extensions and MIME types', () => {
       assert.deepEqual(Array.from(ALLOWED_EXTENSIONS), ['.jpg', '.jpeg', '.png', '.webp']);
       assert.ok(ALLOWED_MIME_TYPES.includes('image/jpeg'));
       assert.ok(ALLOWED_MIME_TYPES.includes('image/png'));
       assert.ok(ALLOWED_MIME_TYPES.includes('image/webp'));
+    });
+
+    it('should enforce 5MB maximum upload limit', () => {
+      assert.equal(MAX_UPLOAD_SIZE, 5 * 1024 * 1024);
     });
   });
 });

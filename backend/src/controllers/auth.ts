@@ -423,6 +423,15 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     return fail(res, 'Không tìm thấy tài khoản sinh viên', 404);
   }
 
+  // [SV-04] Chỉ cho phép nộp lại hồ sơ khi đang ở trạng thái bị từ chối (rejected)
+  if (current.status !== 'rejected') {
+    return fail(
+      res,
+      `Hồ sơ của bạn hiện đang ở trạng thái "${current.status}". Chỉ hồ sơ bị từ chối phê duyệt mới có thể nộp lại.`,
+      400,
+    );
+  }
+
   const pass = new_password || password;
   let password_hash: string | undefined;
   if (pass && pass.length >= 6) {
