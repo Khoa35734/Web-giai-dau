@@ -1,7 +1,7 @@
 import type { Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.ts';
 
-/** Upload banner — file đã được multer xử lý trong middleware. */
+/** Upload banner giải đấu — file đã được multer xử lý trong middleware. */
 export const uploadBanner = asyncHandler(async (req, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
@@ -16,5 +16,14 @@ export const uploadDocument = asyncHandler(async (req, res: Response) => {
     return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
   }
   const url = `${req.protocol}://${req.get('host')}/api/documents/${req.file.filename}`;
+  return res.json({ success: true, url });
+});
+
+/** Upload hình ảnh thông dụng. */
+export const uploadImage = asyncHandler(async (req, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
+  }
+  const url = `${req.protocol}://${req.get('host')}/api/images/${req.file.filename}`;
   return res.json({ success: true, url });
 });

@@ -38,6 +38,12 @@ app.use(
   express.static(path.join(process.cwd(), 'uploads', 'documents'), { maxAge: '7d' }),
 );
 
+// General image uploads
+app.use(
+  '/api/images',
+  express.static(path.join(process.cwd(), 'uploads', 'images'), { maxAge: '7d' }),
+);
+
 // ===========================
 // API ROUTES
 // ===========================
