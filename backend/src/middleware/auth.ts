@@ -75,3 +75,31 @@ export function verifyAdmin(req: AuthenticatedRequest, res: Response, next: Next
   }
   next();
 }
+
+/**
+ * [SRS 5.1] Chấp nhận CẢ admin/CTV token VÀ participant token.
+ * Dùng cho upload routes nơi cả hai nhóm đều cần upload file.
+ * Gắn decoded vào req.user HOẶC req.participant tùy loại token.
+ */
+export function verifyAnyToken(
+  req: AuthenticatedRequest & AuthenticatedParticipantRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    res.status(401).json({ success: false, message: 'Token not found' });
+    return;
+  }
+  try {
+    const decoded = jwt.verify(token, env.jwtSecret) as JwtPayload;
+    if (decoded.kind === 'participant') {
+      req.participant = decoded as JwtPayload & { kind: 'participant' };
+    } else {
+      req.user = decoded;
+    }
+    next();
+  } catch {
+    res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+}

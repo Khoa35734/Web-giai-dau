@@ -147,13 +147,90 @@ export const registrationRepository = {
     return result.rows;
   },
 
-  /** Cập nhật trạng thái đăng ký. */
-  async updateStatus(id: string, status: RegistrationStatus): Promise<Registration | null> {
-    const result = await pool.query<Registration>(
-      `UPDATE registrations SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *`,
-      [status, id],
-    );
-    return result.rows[0] ?? null;
+  /**
+   * [SRS 3.2 AD-13] Cập nhật trạng thái đăng ký — với transition validation + audit trail.
+   * Chỉ cho phép: pending → approved, pending → rejected, rejected → pending.
+   * Ghi reviewer info + audit log trong cùng transaction.
+   */
+  async updateStatus(
+    id: string,
+    status: RegistrationStatus,
+    actorId: string,
+    reason?: string,
+    ipAddress?: string,
+  ): Promise<Registration | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lấy trạng thái hiện tại và kiểm tra tồn tại
+      const currentResult = await client.query<Registration>(
+        'SELECT * FROM registrations WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      // Transition validation
+      const VALID_TRANSITIONS: Record<string, string[]> = {
+        pending: ['approved', 'rejected'],
+        rejected: ['pending'],
+        approved: ['rejected'], // Cho phép thu hồi approval
+      };
+      const allowed = VALID_TRANSITIONS[current.status] ?? [];
+      if (!allowed.includes(status)) {
+        await client.query('ROLLBACK');
+        throw new Error(
+          `Không thể chuyển trạng thái đăng ký từ "${current.status}" sang "${status}". ` +
+          `Chỉ cho phép: ${allowed.join(', ') || 'không có'}.`,
+        );
+      }
+
+      // Cập nhật registration kèm reviewer info
+      const result = await client.query<Registration>(
+        `UPDATE registrations SET
+            status = $1,
+            reviewed_by = $2,
+            review_reason = $3,
+            reviewed_at = NOW(),
+            updated_at = NOW()
+         WHERE id = $4
+         RETURNING *`,
+        [status, actorId, reason ?? null, id],
+      );
+
+      // Ghi audit log
+      await client.query(
+        `INSERT INTO audit_logs (
+           actor_id, actor_role, action, target_table, target_id, payload, ip_address
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          actorId,
+          'admin',
+          `REGISTRATION_${status.toUpperCase()}`,
+          'registrations',
+          id,
+          JSON.stringify({
+            previous_status: current.status,
+            new_status: status,
+            reason: reason ?? null,
+            tournament_id: current.tournament_id,
+          }),
+          ipAddress ?? null,
+        ],
+      );
+
+      await client.query('COMMIT');
+      return result.rows[0] ?? null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   /** Tìm đăng ký kèm thông tin chủ giải (để kiểm tra quyền xóa). */

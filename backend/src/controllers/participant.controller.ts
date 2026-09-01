@@ -177,7 +177,10 @@ export const createParticipant = asyncHandler(async (req, res: Response) => {
   }
 
   const cleanUsername = (username || student_id || email || '').trim();
-  if (await participantRepository.usernameExists(cleanUsername)) {
+  // [SRS 3.1] Canonical lowercase cho free/external accounts
+  const isExternalType = !['internal', 'dut', 'dut_student'].includes(account_type);
+  const normalizedUsername = isExternalType ? cleanUsername.toLowerCase() : cleanUsername;
+  if (await participantRepository.usernameExists(normalizedUsername)) {
     return fail(res, 'Tên đăng nhập / MSSV đã tồn tại trong hệ thống', 400);
   }
 
@@ -189,7 +192,7 @@ export const createParticipant = asyncHandler(async (req, res: Response) => {
   const participant = await participantRepository.create({
     id: student_id ? student_id.trim() : undefined,
     account_type,
-    username: cleanUsername,
+    username: normalizedUsername,
     password_hash,
     full_name: full_name.trim(),
     student_id: student_id ? student_id.trim() : cleanUsername,
@@ -231,7 +234,11 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
   }
 
   if (username && username.trim() !== participant.username) {
-    if (await participantRepository.usernameExists(username.trim(), id)) {
+    // [SRS 3.1] Lowercase cho free/external accounts
+    const effectiveType = account_type ?? participant.account_type;
+    const isExternalUpdate = !['internal', 'dut', 'dut_student'].includes(effectiveType);
+    const normalizedUsername = isExternalUpdate ? username.trim().toLowerCase() : username.trim();
+    if (await participantRepository.usernameExists(normalizedUsername, id)) {
       return fail(res, 'Tên đăng nhập đã được sử dụng', 400);
     }
   }
@@ -250,9 +257,16 @@ export const updateParticipant = asyncHandler(async (req, res: Response) => {
     password_hash = await bcryptjs.hash(password, 10);
   }
 
+  // [SRS 3.1] Lowercase username cho free/external
+  const effectiveType = account_type ?? participant.account_type;
+  const isExternalFinal = !['internal', 'dut', 'dut_student'].includes(effectiveType);
+  const finalUsername = username
+    ? (isExternalFinal ? username.trim().toLowerCase() : username.trim())
+    : participant.username;
+
   const updated = await participantRepository.update(id, {
     account_type: account_type ?? participant.account_type,
-    username: username ? username.trim() : participant.username,
+    username: finalUsername,
     full_name: full_name ? full_name.trim() : participant.full_name,
     student_id: student_id ? student_id.trim() : participant.student_id,
     email: email ? email.trim() : participant.email,

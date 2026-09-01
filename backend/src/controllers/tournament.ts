@@ -118,6 +118,23 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     if (!['pending', 'approved', 'rejected'].includes(body.status)) {
       return fail(res, 'Trạng thái không hợp lệ', 400);
     }
+
+    // [SRS 3.2] Transition validation cho tournament status
+    const VALID_TRANSITIONS: Record<string, string[]> = {
+      pending: ['approved', 'rejected'],
+      rejected: ['pending'],
+      approved: ['active', 'rejected'],
+      active: ['completed'],
+    };
+    const allowed = VALID_TRANSITIONS[tournament.status] ?? [];
+    if (!allowed.includes(body.status)) {
+      return fail(
+        res,
+        `Không thể chuyển trạng thái giải đấu từ "${tournament.status}" sang "${body.status}". ` +
+        `Chỉ cho phép: ${allowed.join(', ') || 'không có'}.`,
+        400,
+      );
+    }
   }
 
   if (!isCreator && !isAdmin) {
@@ -130,7 +147,21 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     }
   }
 
-  const isApproval = isAdmin && body.status;
+  // [SRS 3.2] Chỉ set approval metadata khi thực sự chuyển SANG 'approved'
+  // Xóa approval metadata khi chuyển KHỎI 'approved'
+  const isTransitionToApproved = body.status === 'approved' && tournament.status !== 'approved';
+  const isTransitionFromApproved = body.status && body.status !== 'approved' && tournament.status === 'approved';
+
+  let approvedBy = tournament.approved_by;
+  let approvedAt = tournament.approved_at;
+
+  if (isTransitionToApproved) {
+    approvedBy = req.user!.id;
+    approvedAt = new Date().toISOString();
+  } else if (isTransitionFromApproved) {
+    approvedBy = null;
+    approvedAt = null;
+  }
 
   const updated = await tournamentRepository.update(id, {
     name: body.name ?? tournament.name,
@@ -150,8 +181,8 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     external_registration_url: body.external_registration_url ?? tournament.external_registration_url,
     form_schema: body.form_schema !== undefined ? (body.form_schema as FormSchema) : tournament.form_schema,
     status: body.status ?? tournament.status,
-    approved_by: isApproval ? req.user!.id : tournament.approved_by,
-    approved_at: isApproval ? new Date().toISOString() : tournament.approved_at,
+    approved_by: approvedBy,
+    approved_at: approvedAt,
   });
 
   return ok(res, updated, 'Giải đấu được cập nhật thành công');

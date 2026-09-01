@@ -103,21 +103,40 @@ export const listByTournament = asyncHandler(async (req: AuthenticatedRequest, r
   });
 });
 
-/** Cập nhật trạng thái đăng ký (admin). */
-export const updateStatus = asyncHandler(async (req, res: Response) => {
+/** [AD-13] Cập nhật trạng thái đăng ký (admin) — với transition validation + audit trail. */
+export const updateStatus = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const id = paramId(req);
-  const { status } = req.body as { status?: RegistrationStatus };
+  const { status, rejection_reason } = req.body as { status?: RegistrationStatus; rejection_reason?: string };
 
   if (!['pending', 'approved', 'rejected'].includes(status ?? '')) {
     return fail(res, 'Trạng thái không hợp lệ', 400);
   }
 
-  const registration = await registrationRepository.updateStatus(id, status!);
-  if (!registration) {
-    return fail(res, 'Không tìm thấy đăng ký', 404);
+  // Yêu cầu lý do khi từ chối
+  if (status === 'rejected' && (!rejection_reason || !rejection_reason.trim())) {
+    return fail(res, 'Vui lòng cung cấp lý do từ chối', 400);
   }
 
-  return ok(res, registration, 'Cập nhật trạng thái thành công');
+  const actorId = req.user?.id || 'admin';
+  const ipAddress = req.ip || req.socket.remoteAddress;
+
+  try {
+    const registration = await registrationRepository.updateStatus(
+      id,
+      status!,
+      actorId,
+      rejection_reason?.trim(),
+      ipAddress,
+    );
+    if (!registration) {
+      return fail(res, 'Không tìm thấy đăng ký', 404);
+    }
+    return ok(res, registration, 'Cập nhật trạng thái thành công');
+  } catch (error) {
+    // Transition validation error từ repository
+    const message = error instanceof Error ? error.message : 'Không thể cập nhật trạng thái';
+    return fail(res, message, 400);
+  }
 });
 
 /** Xóa đăng ký — admin hoặc chủ giải. */

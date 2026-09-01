@@ -39,6 +39,36 @@ export const participantRepository = {
     return result.rows[0] ?? null;
   },
 
+  /**
+   * [SRS 5.1] Tìm participant theo identifier — CHỈ trả cột an toàn (không password_hash).
+   * Dùng ở nơi không cần xác thực mật khẩu.
+   */
+  async findSafeByIdentifier(identifier: string): Promise<SafeParticipant | null> {
+    const cleanId = identifier.trim();
+    const result = await pool.query<SafeParticipant>(
+      `SELECT ${PARTICIPANT_SAFE_COLUMNS} FROM participants
+       WHERE username ILIKE $1 OR email ILIKE $1 OR student_id ILIKE $1 OR id = $1
+       LIMIT 1`,
+      [cleanId],
+    );
+    return result.rows[0] ?? null;
+  },
+
+  /**
+   * [SRS 5.1] Trả về CHỈ id + password_hash — dùng duy nhất cho bước so khớp bcrypt.
+   * Giảm thiểu phạm vi dữ liệu nhạy cảm trong bộ nhớ.
+   */
+  async findPasswordHashByIdentifier(identifier: string): Promise<{ id: string; password_hash: string } | null> {
+    const cleanId = identifier.trim();
+    const result = await pool.query<{ id: string; password_hash: string }>(
+      `SELECT id, password_hash FROM participants
+       WHERE username ILIKE $1 OR email ILIKE $1 OR student_id ILIKE $1 OR id = $1
+       LIMIT 1`,
+      [cleanId],
+    );
+    return result.rows[0] ?? null;
+  },
+
   async findSafeById(id: string): Promise<SafeParticipant | null> {
     const result = await pool.query<SafeParticipant>(
       `SELECT ${PARTICIPANT_SAFE_COLUMNS} FROM participants WHERE id = $1`,
@@ -88,6 +118,10 @@ export const participantRepository = {
     const finalStatus = data.status || 'pending';
     const finalAccountType = ['dut', 'internal', 'dut_student'].includes(data.account_type) ? 'internal' : 'external';
 
+    // [SRS 3.1 SV-01] Enforce canonical lowercase cho username free/external accounts
+    const rawUsername = data.username || data.student_id || data.email || participantId;
+    const finalUsername = finalAccountType === 'external' ? rawUsername.toLowerCase() : rawUsername;
+
     const result = await pool.query<SafeParticipant>(
       `INSERT INTO participants (
          id, username, password_hash, full_name, student_id, email, phone_number,
@@ -97,7 +131,7 @@ export const participantRepository = {
        RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
       [
         participantId,
-        data.username || data.student_id || data.email || participantId,
+        finalUsername,
         data.password_hash,
         data.full_name,
         data.student_id ?? null,
@@ -169,6 +203,12 @@ export const participantRepository = {
     };
   },
 
+  /**
+   * [SRS 3.1] Cập nhật participant — sử dụng dynamic SET clause.
+   * Khác với COALESCE: khi field = null (explicit), ghi NULL vào DB.
+   * Khi field = undefined (không truyền), giữ nguyên giá trị cũ.
+   * Điều này cho phép xóa trắng class_name, faculty_name khi chuyển sang free account.
+   */
   async update(
     id: string,
     data: {
@@ -187,49 +227,45 @@ export const participantRepository = {
       status?: ParticipantStatus;
     },
   ): Promise<SafeParticipant | null> {
-    const current = await this.findById(id);
-    if (!current) return null;
+    // Build dynamic SET clause — only include fields explicitly passed (not undefined)
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
 
-    const normalizedAccountType = data.account_type
-      ? ['dut', 'internal', 'dut_student'].includes(data.account_type)
+    const addField = (column: string, value: unknown): void => {
+      params.push(value);
+      setClauses.push(`${column} = $${params.length}`);
+    };
+
+    if (data.account_type !== undefined) {
+      const normalized = ['dut', 'internal', 'dut_student'].includes(data.account_type)
         ? 'internal'
-        : 'external'
-      : undefined;
+        : 'external';
+      addField('account_type', normalized);
+    }
+    if (data.username !== undefined) addField('username', data.username);
+    if (data.password_hash !== undefined) addField('password_hash', data.password_hash);
+    if (data.full_name !== undefined) addField('full_name', data.full_name);
+    if (data.student_id !== undefined) addField('student_id', data.student_id);
+    if (data.email !== undefined) addField('email', data.email);
+    if (data.phone_number !== undefined) addField('phone_number', data.phone_number);
+    if (data.university_name !== undefined) addField('university_name', data.university_name);
+    if (data.class_name !== undefined) addField('class_name', data.class_name);
+    if (data.faculty_name !== undefined) addField('faculty_name', data.faculty_name);
+    if (data.student_card_url !== undefined) addField('student_card_url', data.student_card_url);
+    if (data.selfie_with_student_card_url !== undefined) addField('selfie_with_student_card_url', data.selfie_with_student_card_url);
+    if (data.status !== undefined) addField('status', data.status);
+
+    if (setClauses.length === 0) {
+      // Không có field nào thay đổi — trả về dữ liệu hiện tại
+      return this.findSafeById(id);
+    }
+
+    setClauses.push('updated_at = NOW()');
+    params.push(id);
 
     const result = await pool.query<SafeParticipant>(
-      `UPDATE participants SET
-          account_type = COALESCE($1, account_type),
-          username = COALESCE($2, username),
-          password_hash = COALESCE($3, password_hash),
-          full_name = COALESCE($4, full_name),
-          student_id = COALESCE($5, student_id),
-          email = COALESCE($6, email),
-          phone_number = COALESCE($7, phone_number),
-          university_name = COALESCE($8, university_name),
-          class_name = COALESCE($9, class_name),
-          faculty_name = COALESCE($10, faculty_name),
-          student_card_url = COALESCE($11, student_card_url),
-          selfie_with_student_card_url = COALESCE($12, selfie_with_student_card_url),
-          status = COALESCE($13, status),
-          updated_at = NOW()
-       WHERE id = $14
-       RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
-      [
-        normalizedAccountType ?? null,
-        data.username ?? null,
-        data.password_hash ?? null,
-        data.full_name ?? null,
-        data.student_id ?? null,
-        data.email ?? null,
-        data.phone_number ?? null,
-        data.university_name ?? null,
-        data.class_name ?? null,
-        data.faculty_name ?? null,
-        data.student_card_url ?? null,
-        data.selfie_with_student_card_url ?? null,
-        data.status ?? null,
-        id,
-      ],
+      `UPDATE participants SET ${setClauses.join(', ')} WHERE id = $${params.length} RETURNING ${PARTICIPANT_SAFE_COLUMNS}`,
+      params,
     );
 
     return result.rows[0] ?? null;

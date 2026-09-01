@@ -286,17 +286,19 @@ export const studentLogin = asyncHandler(async (req, res: Response) => {
     return fail(res, 'Vui lòng nhập Mã sinh viên / Email và mật khẩu', 400);
   }
 
-  const participant = await participantRepository.findByIdentifier(identifier);
-  if (!participant) {
+  // [SRS 5.1] Chỉ lấy id + password_hash — giảm thiểu credential exposure
+  const credentials = await participantRepository.findPasswordHashByIdentifier(identifier);
+  if (!credentials) {
     return fail(res, 'Tài khoản hoặc mật khẩu không chính xác', 401);
   }
 
-  const isValidPassword = await bcryptjs.compare(password, participant.password_hash);
+  const isValidPassword = await bcryptjs.compare(password, credentials.password_hash);
   if (!isValidPassword) {
     return fail(res, 'Tài khoản hoặc mật khẩu không chính xác', 401);
   }
 
-  const safeParticipant = await participantRepository.findSafeById(participant.id);
+  // Lấy safe participant (không password_hash) cho response
+  const safeParticipant = await participantRepository.findSafeById(credentials.id);
   if (!safeParticipant) {
     return fail(res, 'Không tìm thấy hồ sơ người dùng', 404);
   }

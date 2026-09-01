@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   validateImageFile,
+  validateMagicBytes,
   ALLOWED_EXTENSIONS,
   ALLOWED_MIME_TYPES,
   MAX_UPLOAD_SIZE,
@@ -75,4 +79,59 @@ describe('Upload Middleware & Security Validation', () => {
       assert.equal(MAX_UPLOAD_SIZE, 5 * 1024 * 1024);
     });
   });
+
+  describe('validateMagicBytes - Image File Signature Validation [SRS 5.2]', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dut-upload-test-'));
+
+    it('should recognize valid JPEG file by magic bytes (FF D8 FF)', () => {
+      const jpgPath = path.join(tempDir, 'valid.jpg');
+      const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+      fs.writeFileSync(jpgPath, buf);
+
+      const result = validateMagicBytes(jpgPath);
+      assert.equal(result.valid, true);
+      assert.equal(result.detectedType, 'image/jpeg');
+    });
+
+    it('should recognize valid PNG file by magic bytes (89 50 4E 47 0D 0A 1A 0A)', () => {
+      const pngPath = path.join(tempDir, 'valid.png');
+      const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+      fs.writeFileSync(pngPath, buf);
+
+      const result = validateMagicBytes(pngPath);
+      assert.equal(result.valid, true);
+      assert.equal(result.detectedType, 'image/png');
+    });
+
+    it('should recognize valid WebP file by magic bytes (RIFF....WEBP)', () => {
+      const webpPath = path.join(tempDir, 'valid.webp');
+      const buf = Buffer.from([
+        0x52, 0x49, 0x46, 0x46, // 'RIFF'
+        0x24, 0x00, 0x00, 0x00, // size
+        0x57, 0x45, 0x42, 0x50, // 'WEBP'
+      ]);
+      fs.writeFileSync(webpPath, buf);
+
+      const result = validateMagicBytes(webpPath);
+      assert.equal(result.valid, true);
+      assert.equal(result.detectedType, 'image/webp');
+    });
+
+    it('should reject spoofed files (e.g. text/HTML/SVG saved with .jpg extension)', () => {
+      const spoofedPath = path.join(tempDir, 'fake.jpg');
+      fs.writeFileSync(spoofedPath, '<html><script>alert("xss")</script></html>');
+
+      const result = validateMagicBytes(spoofedPath);
+      assert.equal(result.valid, false);
+      assert.match(result.error || '', /không khớp với định dạng ảnh/i);
+    });
+
+    it('should reject non-existent or unreadable file paths', () => {
+      const invalidPath = path.join(tempDir, 'does-not-exist.jpg');
+      const result = validateMagicBytes(invalidPath);
+      assert.equal(result.valid, false);
+      assert.match(result.error || '', /không thể đọc file/i);
+    });
+  });
 });
+

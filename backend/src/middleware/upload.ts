@@ -68,6 +68,39 @@ export function validateImageFile(file: { originalname?: string; mimetype?: stri
   return { valid: true, safeExt: ext };
 }
 
+/**
+ * [SRS 5.2] Magic-byte validation — đọc header file để xác minh đúng định dạng ảnh.
+ * Ngăn chặn tấn công content-type spoofing (upload file HTML/SVG giả mạo ảnh).
+ * Gọi SAU khi multer đã lưu file lên disk.
+ */
+export function validateMagicBytes(filePath: string): { valid: boolean; detectedType?: string; error?: string } {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(12);
+    fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
+      return { valid: true, detectedType: 'image/jpeg' };
+    }
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47
+      && buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A) {
+      return { valid: true, detectedType: 'image/png' };
+    }
+    // WebP: RIFF....WEBP
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+      return { valid: true, detectedType: 'image/webp' };
+    }
+
+    return { valid: false, error: 'Nội dung file không khớp với định dạng ảnh hợp lệ (JPEG/PNG/WebP). File có thể bị giả mạo.' };
+  } catch {
+    return { valid: false, error: 'Không thể đọc file để xác minh định dạng' };
+  }
+}
+
 const bannerStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, BANNERS_DIR),
   filename: (_req, file, cb) => {
