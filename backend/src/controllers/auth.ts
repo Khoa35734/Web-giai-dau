@@ -61,17 +61,20 @@ interface UpdateProfileBody {
 
 interface ResubmitBody {
   identifier?: string;
-  password?: string;
-  full_name?: string;
-  phone_number?: string;
-  university_name?: string;
+  id?: string;
+  email?: string;
   username?: string | null;
   student_id?: string | null;
+  full_name?: string;
+  phone_number?: string | null;
+  university_name?: string | null;
   class_name?: string | null;
   faculty_name?: string | null;
   student_card_url?: string | null;
   selfie_with_student_card_url?: string | null;
+  password?: string;
   new_password?: string;
+  current_password?: string;
 }
 
 /** Sinh JWT cho user quản trị (Admin / CTV). */
@@ -209,16 +212,34 @@ export const studentRegister = asyncHandler(async (req, res: Response) => {
   } = req.body as StudentRegisterBody;
 
   if (!password || !full_name) {
-    return fail(res, 'Họ và tên cùng mật khẩu là bắt buộc', 400);
+    return fail(res, 'Họ và tên cùng mật khẩu là bắt buộc', 400, 'INVALID_INPUT_DATA');
   }
 
   if (password.length < 6) {
-    return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400);
+    return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400, 'PASSWORD_TOO_SHORT');
+  }
+
+  // [Zero CCCD Policy & TASK_BE_101] Bắt buộc cung cấp đủ 2 ảnh Thẻ SV
+  if (!student_card_url?.trim() || !selfie_with_student_card_url?.trim()) {
+    const errors: Array<{ field?: string; message: string }> = [];
+    if (!student_card_url?.trim()) {
+      errors.push({ field: 'student_card_url', message: 'Ảnh mặt trước thẻ sinh viên là bắt buộc' });
+    }
+    if (!selfie_with_student_card_url?.trim()) {
+      errors.push({ field: 'selfie_with_student_card_url', message: 'Ảnh selfie cầm thẻ sinh viên là bắt buộc' });
+    }
+    return fail(
+      res,
+      'Yêu cầu bắt buộc 2 ảnh xác minh sinh viên: Mặt trước thẻ sinh viên và Ảnh selfie cầm thẻ sinh viên.',
+      400,
+      'MISSING_STUDENT_CARD_IMAGES',
+      errors,
+    );
   }
 
   const rawId = student_id?.trim() || username?.trim() || email?.trim();
   if (!rawId) {
-    return fail(res, 'Mã số sinh viên hoặc Email là bắt buộc', 400);
+    return fail(res, 'Mã số sinh viên hoặc Email là bắt buộc', 400, 'MISSING_IDENTIFIER');
   }
 
   // [SRS 3.1] Chuẩn hóa toàn diện định danh (id, student_id, username, account_type)
@@ -417,6 +438,8 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
   const {
     identifier,
     id,
+    email,
+    username,
     full_name,
     phone_number,
     university_name,
@@ -428,14 +451,14 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     new_password,
     password,
     current_password,
-  } = req.body as any;
+  } = req.body as ResubmitBody;
 
   // [SV-04] RÀNG BUỘC ĐỊNH DANH NGHIÊM NGẶT:
   // 1. NẾU ĐÃ CÓ TOKEN: targetId cố định từ token, KHÔNG nhận bất kỳ ID nào từ req.body
   //    (Ngăn chặn hoàn toàn việc người dùng A nộp đè hồ sơ người dùng B).
   // 2. NẾU KHÔNG CÓ TOKEN (Fallback): BẮT BUỘC phải xác thực mật khẩu hiện tại bằng bcrypt.
   if (!targetId) {
-    const lookup = (id || identifier || student_id || (req.body as any).email || (req.body as any).username || '').toString().trim();
+    const lookup = (id || identifier || student_id || email || username || '').toString().trim();
     if (!lookup) {
       return fail(res, 'Không xác định được tài khoản sinh viên cần nộp lại hồ sơ. Vui lòng đăng nhập hoặc cung cấp Mã sinh viên / Email.', 400);
     }
@@ -472,6 +495,18 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     );
   }
 
+  // [Zero CCCD Policy & TASK_BE_101] Đảm bảo thông tin nộp lại vẫn có đủ 2 ảnh Thẻ SV
+  const targetCardUrl = student_card_url !== undefined ? student_card_url : current.student_card_url;
+  const targetSelfieUrl = selfie_with_student_card_url !== undefined ? selfie_with_student_card_url : current.selfie_with_student_card_url;
+  if (!targetCardUrl?.trim() || !targetSelfieUrl?.trim()) {
+    return fail(
+      res,
+      'Nộp lại hồ sơ yêu cầu phải cung cấp đủ 2 ảnh: Thẻ sinh viên mặt trước và Ảnh selfie cầm thẻ.',
+      400,
+      'MISSING_STUDENT_CARD_IMAGES',
+    );
+  }
+
   const pass = new_password || (req.participant ? password : undefined);
   let password_hash: string | undefined;
   if (pass && pass.length >= 6) {
@@ -485,9 +520,8 @@ export const resubmitParticipant = asyncHandler(async (req: AuthenticatedPartici
     student_id: student_id !== undefined ? (student_id?.trim() || null) : current.student_id,
     class_name: class_name !== undefined ? (class_name?.trim() || null) : current.class_name,
     faculty_name: faculty_name !== undefined ? (faculty_name?.trim() || null) : current.faculty_name,
-    student_card_url: student_card_url !== undefined ? student_card_url : current.student_card_url,
-    selfie_with_student_card_url:
-      selfie_with_student_card_url !== undefined ? selfie_with_student_card_url : current.selfie_with_student_card_url,
+    student_card_url: targetCardUrl,
+    selfie_with_student_card_url: targetSelfieUrl,
     password_hash,
   });
 

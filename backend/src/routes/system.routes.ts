@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import pool from '../config/db.ts';
+import * as registrationController from '../controllers/registration.ts';
+import { verifyToken } from '../middleware/auth.ts';
 
 const router = Router();
 
@@ -25,5 +27,29 @@ router.get('/db-test', async (_req, res) => {
     });
   }
 });
+
+/** Danh sách Khoa thuộc Trường ĐH Bách Khoa - ĐHĐN [SV-01] */
+router.get('/dut/faculties', (_req, res) => {
+  const faculties = [
+    'Khoa Công nghệ Thông tin',
+    'Khoa Điện tử - Viễn thông',
+    'Khoa Điện',
+    'Khoa Cơ khí',
+    'Khoa Cơ khí Giao thông',
+    'Khoa Xây dựng Cầu - Đường',
+    'Khoa Xây dựng Dân dụng và Công nghiệp',
+    'Khoa Xây dựng Thủy lợi - Thủy điện',
+    'Khoa Hóa',
+    'Khoa Môi trường',
+    'Khoa Quản lý Dự án',
+    'Khoa Kiến trúc',
+    'Khoa Khoa học Công nghệ Tiên tiến (FAST)',
+  ];
+  res.json({ success: true, data: faculties });
+});
+
+/** [AD-03] Đăng ký của các giải do user phụ trách (Admin / CTV) */
+router.get('/my-registrations', verifyToken, registrationController.myRegistrations);
+router.get('/my-tournaments', verifyToken, registrationController.myTournaments);
 
 export default router;

@@ -40,7 +40,12 @@ export const listParticipants = asyncHandler(async (req, res: Response) => {
     currentPage,
     pageSize,
   );
-  return res.json({ success: true, data: rows, pagination });
+  return res.json({
+    success: true,
+    message: 'Lấy danh sách hồ sơ sinh viên thành công',
+    data: rows,
+    pagination,
+  });
 });
 
 /** [AD-01] Chi tiết participant (admin) kèm 2 ảnh KYC. */

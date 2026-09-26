@@ -76,6 +76,18 @@ export async function runSchemaPreflight(): Promise<PreflightResult> {
       (c) => !existingConstraints.has(c.toLowerCase()),
     );
 
+    // Auto-repair column joined_at on registration_members if needed
+    try {
+      await pool.query(
+        'ALTER TABLE public.registration_members ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;',
+      );
+      await pool.query(
+        'UPDATE public.registration_members SET joined_at = created_at WHERE joined_at IS NULL AND created_at IS NOT NULL;',
+      );
+    } catch {
+      // Ignore if table does not exist yet
+    }
+
     result.driftDetected =
       !result.hasUuidExtension ||
       result.missingTables.length > 0 ||

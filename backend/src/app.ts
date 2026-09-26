@@ -4,8 +4,11 @@ import path from 'node:path';
 import { errorHandler, notFoundHandler } from './middleware/error.ts';
 import adminRoutes from './routes/admin.routes.ts';
 import authRoutes from './routes/auth.routes.ts';
+import checkinRoutes from './routes/checkin.routes.ts';
+import organizerRoutes from './routes/organizer.routes.ts';
 import registrationRoutes from './routes/registration.routes.ts';
 import systemRoutes from './routes/system.routes.ts';
+import teamRequestRoutes from './routes/teamRequest.routes.ts';
 import tournamentRoutes from './routes/tournament.routes.ts';
 import uploadRoutes from './routes/upload.routes.ts';
 
@@ -54,7 +57,11 @@ app.get('/api/documents/:filename', verifyAnyToken, serveDocument);
 app.use('/api', systemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/tournaments', tournamentRoutes);
+app.use('/api/organizers', organizerRoutes);
 app.use('/api/registrations', registrationRoutes);
+app.use('/api/team-requests', teamRequestRoutes);
+app.use('/api/v1/team-requests', teamRequestRoutes);
+app.use('/api/checkins', checkinRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
 
