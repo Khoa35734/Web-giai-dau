@@ -22,6 +22,7 @@ interface TournamentBody {
   start_at?: string;
   end_at?: string;
   description?: string;
+  location?: string;
   use_external_link?: boolean;
   external_registration_url?: string;
   form_schema?: unknown;
@@ -30,8 +31,16 @@ interface TournamentBody {
 
 /** Danh sách giải đấu (public) — hỗ trợ tìm kiếm + lọc trạng thái. */
 export const list = asyncHandler(async (req, res: Response) => {
-  const { search, status } = req.query as { search?: string; status?: string };
-  const rows = await tournamentRepository.list({ search, status });
+  const { search, status, public_only } = req.query as {
+    search?: string;
+    status?: string;
+    public_only?: string;
+  };
+  const rows = await tournamentRepository.list({
+    search,
+    status,
+    public_only: public_only === 'true',
+  });
   return ok(res, rows);
 });
 
@@ -81,6 +90,7 @@ export const create = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     start_at: body.start_at,
     end_at: body.end_at,
     description: body.description,
+    location: body.location,
     use_external_link: body.use_external_link,
     external_registration_url: body.external_registration_url,
     form_schema: body.form_schema ?? [],
@@ -110,13 +120,56 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
   const isAdmin = req.user!.role === 'admin';
   const isCreator = tournament.created_by === req.user!.id;
 
-  // Admin mới được duyệt/từ chối
+  // [SRS 4.1, SV-11] Ràng buộc: Giải đấu sau ngày kết thúc hoặc đã hoàn thành/hủy không được chỉnh sửa hoặc hủy
+  const isEnded = tournament.end_at && new Date() > new Date(tournament.end_at);
+  if (isEnded) {
+    return fail(res, 'Giải đấu đã qua ngày kết thúc, không thể chỉnh sửa hoặc hủy giải đấu', 400);
+  }
+
+  if (tournament.status === 'completed') {
+    return fail(res, 'Giải đấu đã hoàn thành, không thể chỉnh sửa hoặc hủy giải đấu', 400);
+  }
+
+  if (tournament.status === 'cancelled') {
+    return fail(res, 'Giải đấu đã bị hủy, không thể chỉnh sửa hoặc thay đổi trạng thái', 400);
+  }
+
+  // Quản lý chuyển trạng thái giải đấu
   if (body.status && body.status !== tournament.status) {
-    if (!isAdmin) {
-      return fail(res, 'Chỉ admin mới có thể duyệt giải đấu', 403);
+    if (body.status === 'cancelled') {
+      // Admin hoặc người tạo giải có quyền hủy giải trước ngày kết thúc
+      if (!isAdmin && !isCreator) {
+        return fail(res, 'Bạn không có quyền hủy giải đấu này', 403);
+      }
+    } else if (body.status === 'approved' || body.status === 'rejected') {
+      if (!isAdmin) {
+        return fail(res, 'Chỉ admin mới có thể duyệt hoặc từ chối giải đấu', 403);
+      }
+    } else if (!isAdmin) {
+      return fail(res, 'Bạn không có quyền thay đổi trạng thái giải đấu này', 403);
     }
-    if (!['pending', 'approved', 'rejected'].includes(body.status)) {
-      return fail(res, 'Trạng thái không hợp lệ', 400);
+
+    // [SRS 3.2] Transition validation cho tournament status
+    const VALID_TRANSITIONS: Record<string, string[]> = {
+      draft: ['pending', 'approved', 'cancelled'],
+      pending: ['approved', 'rejected', 'cancelled'],
+      rejected: ['pending', 'cancelled'],
+      approved: ['active', 'ongoing', 'registration_opened', 'rejected', 'cancelled'],
+      registration_opened: ['registration_closed', 'cancelled'],
+      registration_closed: ['ongoing', 'cancelled'],
+      ongoing: ['completed', 'cancelled'],
+      active: ['completed', 'cancelled'],
+      completed: [],
+      cancelled: [],
+    };
+    const allowed = VALID_TRANSITIONS[tournament.status] ?? [];
+    if (!allowed.includes(body.status)) {
+      return fail(
+        res,
+        `Không thể chuyển trạng thái giải đấu từ "${tournament.status}" sang "${body.status}". ` +
+        `Chỉ cho phép: ${allowed.join(', ') || 'không có'}.`,
+        400,
+      );
     }
   }
 
@@ -130,7 +183,21 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     }
   }
 
-  const isApproval = isAdmin && body.status;
+  // [SRS 3.2] Chỉ set approval metadata khi thực sự chuyển SANG 'approved'
+  // Xóa approval metadata khi chuyển KHỎI 'approved'
+  const isTransitionToApproved = body.status === 'approved' && tournament.status !== 'approved';
+  const isTransitionFromApproved = body.status && body.status !== 'approved' && tournament.status === 'approved';
+
+  let approvedBy = tournament.approved_by;
+  let approvedAt = tournament.approved_at;
+
+  if (isTransitionToApproved) {
+    approvedBy = req.user!.id;
+    approvedAt = new Date().toISOString();
+  } else if (isTransitionFromApproved) {
+    approvedBy = null;
+    approvedAt = null;
+  }
 
   const updated = await tournamentRepository.update(id, {
     name: body.name ?? tournament.name,
@@ -146,12 +213,13 @@ export const update = asyncHandler(async (req: AuthenticatedRequest, res: Respon
     start_at: body.start_at ?? tournament.start_at,
     end_at: body.end_at ?? tournament.end_at,
     description: body.description ?? tournament.description,
+    location: body.location ?? tournament.location,
     use_external_link: body.use_external_link ?? tournament.use_external_link,
     external_registration_url: body.external_registration_url ?? tournament.external_registration_url,
     form_schema: body.form_schema !== undefined ? (body.form_schema as FormSchema) : tournament.form_schema,
     status: body.status ?? tournament.status,
-    approved_by: isApproval ? req.user!.id : tournament.approved_by,
-    approved_at: isApproval ? new Date().toISOString() : tournament.approved_at,
+    approved_by: approvedBy,
+    approved_at: approvedAt,
   });
 
   return ok(res, updated, 'Giải đấu được cập nhật thành công');
@@ -176,6 +244,11 @@ export const remove = asyncHandler(async (req: AuthenticatedRequest, res: Respon
   const tournament = await tournamentRepository.findById(id);
   if (!tournament) {
     return fail(res, 'Không tìm thấy giải đấu', 404);
+  }
+
+  const isEnded = tournament.end_at && new Date() > new Date(tournament.end_at);
+  if (isEnded) {
+    return fail(res, 'Giải đấu đã qua ngày kết thúc, không thể xóa giải đấu', 400);
   }
 
   const isAdmin = req.user!.role === 'admin';

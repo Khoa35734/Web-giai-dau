@@ -58,4 +58,57 @@ export function resolveDutIdentity(studentId: string): { class_name: string | nu
     faculty_name,
   };
 }
+
+/**
+ * [SRS 3.1] Chuẩn hóa ParticipantAccountType về canonical 'internal' | 'external'.
+ * Map 'dut', 'dut_student' -> 'internal', 'free' -> 'external'.
+ */
+export function normalizeParticipantAccountType(type?: string | null): 'internal' | 'external' {
+  if (!type) return 'internal';
+  const lower = type.toLowerCase().trim();
+  if (['internal', 'dut', 'dut_student'].includes(lower)) {
+    return 'internal';
+  }
+  return 'external';
+}
+
+/**
+ * [SRS 3.1] Chuẩn hóa bộ 4 thuộc tính định danh participant:
+ * - id: Khóa chính kỹ thuật
+ * - student_id: MSSV (chỉ dành cho internal/DUT, external luôn là null)
+ * - username: Tên đăng nhập hiển thị / canonical lowercase cho external
+ * - account_type: 'internal' | 'external'
+ */
+export function normalizeParticipantIdentity(data: {
+  id?: string | null;
+  account_type?: string | null;
+  student_id?: string | null;
+  username?: string | null;
+  email?: string | null;
+}): {
+  id: string;
+  account_type: 'internal' | 'external';
+  student_id: string | null;
+  username: string;
+} {
+  const account_type = normalizeParticipantAccountType(data.account_type);
+  const cleanStudentId = data.student_id ? data.student_id.trim() : null;
+
+  let id = data.id ? data.id.trim() : '';
+  if (!id) {
+    id = account_type === 'internal' && cleanStudentId ? cleanStudentId : generateFreeParticipantId();
+  }
+
+  const rawUsername = data.username?.trim() || cleanStudentId || data.email?.trim() || id;
+  const username = account_type === 'external' ? rawUsername.toLowerCase() : rawUsername;
+  const student_id = account_type === 'internal' ? cleanStudentId : null;
+
+  return {
+    id,
+    account_type,
+    student_id,
+    username,
+  };
+}
+
 

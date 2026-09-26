@@ -4,6 +4,7 @@ import type { ParticipationType, Tournament, TournamentStatus } from '../types/i
 export interface TournamentFilters {
   search?: string;
   status?: string;
+  public_only?: boolean;
 }
 
 export interface TournamentInput {
@@ -20,6 +21,7 @@ export interface TournamentInput {
   start_at?: string;
   end_at?: string;
   description?: string;
+  location?: string;
   use_external_link?: boolean;
   external_registration_url?: string;
   form_schema?: unknown;
@@ -42,6 +44,10 @@ export const tournamentRepository = {
     if (filters.status && filters.status !== 'all') {
       params.push(filters.status);
       query += ` AND status = $${params.length}`;
+    }
+    if (filters.public_only) {
+      // [GD0] Chưa mở đăng ký: Không hiển thị trên trang chủ công khai
+      query += " AND status IN ('approved', 'active', 'completed') AND registration_open_at <= NOW()";
     }
     query += ' ORDER BY created_at DESC';
 
@@ -76,11 +82,11 @@ export const tournamentRepository = {
     const result = await pool.query<Tournament>(
       `INSERT INTO tournaments (
           code, name, game_name, game_logo_url, banner_url, participation_type,
-         max_participants, min_team_size, max_team_size,
+          max_participants, min_team_size, max_team_size,
           registration_open_at, registration_close_at,
-          start_at, end_at, description, use_external_link, external_registration_url,
+          start_at, end_at, description, location, use_external_link, external_registration_url,
           form_schema, created_by, approved_by, status, approved_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING *`,
       [
         data.code,
@@ -97,6 +103,7 @@ export const tournamentRepository = {
         data.start_at,
         data.end_at,
         data.description,
+        data.location ?? null,
         data.use_external_link,
         data.external_registration_url,
         JSON.stringify(data.form_schema ?? []),
@@ -118,12 +125,12 @@ export const tournamentRepository = {
     const result = await pool.query<Tournament>(
       `UPDATE tournaments SET
           name=$1, game_name=$2, game_logo_url=$3, banner_url=$4, participation_type=$5,
-         max_participants=$6, min_team_size=$7, max_team_size=$8,
-         registration_open_at=$9, registration_close_at=$10,
-         start_at=$11, end_at=$12, description=$13, use_external_link=$14,
-         external_registration_url=$15, form_schema=$16, status=$17,
-         approved_by=$18, approved_at=$19, updated_at=NOW()
-       WHERE id=$20 RETURNING *`,
+          max_participants=$6, min_team_size=$7, max_team_size=$8,
+          registration_open_at=$9, registration_close_at=$10,
+          start_at=$11, end_at=$12, description=$13, location=$14, use_external_link=$15,
+          external_registration_url=$16, form_schema=$17, status=$18,
+          approved_by=$19, approved_at=$20, updated_at=NOW()
+       WHERE id=$21 RETURNING *`,
       [
         merged.name,
         merged.game_name,
@@ -138,6 +145,7 @@ export const tournamentRepository = {
         merged.start_at,
         merged.end_at,
         merged.description,
+        merged.location ?? null,
         merged.use_external_link,
         merged.external_registration_url,
         typeof merged.form_schema === 'string'
@@ -174,16 +182,22 @@ export const tournamentRepository = {
     return result.rows;
   },
 
-  /** Danh sách giải của một user (admin: tất cả). */
+  /** Danh sách giải của một user (admin: tất cả; CTV: giải do họ tạo hoặc được phân công trong Ban Tổ Chức). */
   async listByUser(userId: string, isAdmin: boolean): Promise<Tournament[]> {
-    const params: string[] = [];
-    let query = 'SELECT * FROM tournaments';
-    if (!isAdmin) {
-      params.push(userId);
-      query += ' WHERE created_by = $1';
+    if (isAdmin) {
+      const result = await pool.query<Tournament>(
+        'SELECT * FROM tournaments ORDER BY created_at DESC',
+      );
+      return result.rows;
     }
-    query += ' ORDER BY created_at DESC';
-    const result = await pool.query<Tournament>(query, params);
+
+    const query = `
+      SELECT DISTINCT t.* FROM tournaments t
+      LEFT JOIN tournament_organizers to_org ON t.id = to_org.tournament_id
+      WHERE t.created_by = $1 OR to_org.user_id = $1
+      ORDER BY t.created_at DESC
+    `;
+    const result = await pool.query<Tournament>(query, [userId]);
     return result.rows;
   },
 

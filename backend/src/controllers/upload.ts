@@ -1,11 +1,81 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.ts';
+import { validateMagicBytes } from '../middleware/upload.ts';
 
-/** Upload banner — file đã được multer xử lý trong middleware. */
+/**
+ * [SRS 5.2] Kiểm tra magic bytes sau khi multer đã lưu file.
+ * Nếu file giả mạo → xóa ngay và trả 400.
+ */
+function rejectSpoofedFile(filePath: string, res: Response): boolean {
+  const check = validateMagicBytes(filePath);
+  if (!check.valid) {
+    // Xóa file giả mạo ngay lập tức
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    res.status(400).json({ success: false, message: check.error || 'File không hợp lệ' });
+    return true;
+  }
+  return false;
+}
+
+/** Upload banner giải đấu — file đã được multer xử lý trong middleware. */
 export const uploadBanner = asyncHandler(async (req, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
   }
+  const filePath = path.resolve(req.file.path);
+  if (rejectSpoofedFile(filePath, res)) return;
   const url = `${req.protocol}://${req.get('host')}/api/banners/${req.file.filename}`;
   return res.json({ success: true, url });
 });
+
+/** Upload tài liệu / ảnh thẻ sinh viên xác thực KYC (SV-01, SV-04). */
+export const uploadDocument = asyncHandler(async (req, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
+  }
+  const filePath = path.resolve(req.file.path);
+  if (rejectSpoofedFile(filePath, res)) return;
+  const url = `${req.protocol}://${req.get('host')}/api/documents/${req.file.filename}`;
+  return res.json({ success: true, url });
+});
+
+/** Upload hình ảnh thông dụng. */
+export const uploadImage = asyncHandler(async (req, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'Không có file được tải lên' });
+  }
+  const filePath = path.resolve(req.file.path);
+  if (rejectSpoofedFile(filePath, res)) return;
+  const url = `${req.protocol}://${req.get('host')}/api/images/${req.file.filename}`;
+  return res.json({ success: true, url });
+});
+
+/**
+ * [SRS 5.1, 5.2] Phục vụ file tài liệu/ảnh thẻ sinh viên KYC có kiểm soát quyền truy cập.
+ * Chỉ cho phép người dùng đã xác thực (Admin, CTV hoặc sinh viên sở hữu) xem ảnh.
+ * Ngăn chặn tuyệt đối Path Traversal attack qua path.basename().
+ */
+export const serveDocument = asyncHandler(async (req, res: Response) => {
+  const rawParam = req.params.filename;
+  const rawFilename = Array.isArray(rawParam) ? rawParam[0] : (rawParam || '');
+  const safeFilename = path.basename(rawFilename);
+
+  if (!safeFilename || safeFilename === '.' || safeFilename.includes('..')) {
+    return res.status(400).json({ success: false, message: 'Tên tệp tin không hợp lệ' });
+  }
+
+  const filePath = path.join(process.cwd(), 'uploads', 'documents', safeFilename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, message: 'Không tìm thấy tài liệu yêu cầu' });
+  }
+
+  res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  return res.sendFile(filePath);
+});
+
+
